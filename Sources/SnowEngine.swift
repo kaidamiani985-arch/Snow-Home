@@ -518,6 +518,16 @@ final class SnowEngine {
                     shed(p, power: 1.0)
                     p.lastShed = w.shakeUntil
                 }
+
+                // A window being minimized shrinks and slides toward the Dock.
+                // Drop the cap before the shrinking platform truncates it, so
+                // the snow falls instead of vanishing with the window.
+                if p.totalSnow > 0.5 &&
+                   wWidth < p.width * 0.90 &&
+                   edgeY > p.edgeY + 4 {
+                    shed(p, power: 1.0)
+                }
+
                 // The height profile is stored relative to the platform's own
                 // left edge, so moving the platform carries the cap rigidly with
                 // the window. Shifting the columns as well would move it twice.
