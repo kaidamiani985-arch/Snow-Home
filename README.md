@@ -2,13 +2,13 @@
 
 **A little snowfall for your desktop.** Snow settles on window tops, the Dock, and desktop icons. Push it around with your cursor, shake a window to knock it loose, and watch it pile up.
 
-[**Download for macOS →**](../../releases/latest) &nbsp;·&nbsp; [How it works](docs/TECHNICAL.md) &nbsp;·&nbsp; [Build from source](#build-from-source)
+[**Download for macOS →**](../../releases) &nbsp;·&nbsp; [How it works](docs/TECHNICAL.md) &nbsp;·&nbsp; [Build from source](#build-from-source)
 
 ![Snow on Mac](docs/banner.png)
 
 ## Install
 
-1. Download the latest zip from [Releases](../../releases/latest).
+1. Download the latest zip from [Releases](../../releases).
 2. Unzip it and drag **Snow On Mac.app** into your Applications folder.
 3. Right-click the app and choose **Open**. macOS will warn that the app is not notarised; this is expected for a small open-source project.
 4. When asked, allow **Accessibility** so snow can sit on your desktop icons. The rest of the app works without it.
