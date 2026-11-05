@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+Tools/build/
+Tools/makeicon
+*.app/
+*.zip
+*.dmg
+dist/
