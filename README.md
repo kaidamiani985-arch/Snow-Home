@@ -5,6 +5,12 @@ ploughed around by the cursor, and falls off when you shake a window.
 
 ![snow](docs/screenshot.png)
 
+## Download
+
+[Download the latest build](../../releases/latest) for Apple Silicon Macs
+(macOS 14 or newer). The app is not notarised, so macOS will ask you to confirm
+the first launch — see the build notes below.
+
 ## Build and run
 
 ```bash
