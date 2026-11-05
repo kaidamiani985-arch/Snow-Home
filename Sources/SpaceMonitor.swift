@@ -35,7 +35,9 @@ final class SpaceMonitor {
     }
 
     func refreshIfNeeded(now: CFTimeInterval) {
-        if now - lastCheck < 0.3 { return }
+        // Poll often enough that a Space transition does not leave the overlay
+        // drawing the Dock for a visible moment.
+        if now - lastCheck < 0.05 { return }
         lastCheck = now
         refresh()
     }

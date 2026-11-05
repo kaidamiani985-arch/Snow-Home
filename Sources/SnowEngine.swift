@@ -43,8 +43,6 @@ final class Platform {
     var occluded: [Bool]
     var rough: [Float]
     var baseOffsets: [Float]
-    var u: [Float]        // horizontal velocity per column, px/s
-    var delta: [Float]    // scratch for advection
     var spillLeft: Float = 0
     var spillRight: Float = 0
     /// Fraction of maxHeight at which the cap starts spilling over its ends.
@@ -59,8 +57,8 @@ final class Platform {
     var lastShed: CFTimeInterval = 0
     /// Earliest time the cap may release another icon avalanche.
     var nextSpill: CFTimeInterval = 0
-    /// Earliest time the next single sand grain may leave this edge.
-    var nextGrain: CFTimeInterval = 0
+    /// Earliest time the next small edge cluster may crumble off.
+    var nextEdgeShed: CFTimeInterval = 0
     var renderCap: Float = 10_000
 
     init(id: CGWindowID?, layer: SnowLayer, x0: Float, edgeY: Float,
@@ -80,8 +78,6 @@ final class Platform {
         self.occluded = [Bool](repeating: false, count: n)
         self.rough = Platform.makeRough(count: n, seed: noiseSeed)
         self.baseOffsets = [Float](repeating: 0, count: n)
-        self.u = [Float](repeating: 0, count: n)
-        self.delta = [Float](repeating: 0, count: n)
     }
 
     /// Smooth low-frequency variation so a saturated cap still has peaks and
@@ -109,8 +105,6 @@ final class Platform {
             occluded = [Bool](repeating: false, count: n)
             rough = Platform.makeRough(count: n, seed: noiseSeed)
             baseOffsets = [Float](repeating: 0, count: n)
-            u = [Float](repeating: 0, count: n)
-            delta = [Float](repeating: 0, count: n)
         } else if occluded.count != n {
             occluded = [Bool](repeating: false, count: n)
         }
@@ -193,6 +187,8 @@ final class SnowEngine {
     private var cursorVisible = false
     private var lastCursor: CGPoint = .zero
     private var hasLastCursor = false
+    private var lastPloughX: Float = 0
+    private var hasLastPlough = false
     private var intensity: Float = 1.0
     /// Whole-screen budget for automatic icon avalanches. Interaction-driven
     /// grains bypass this so pushing snow still feels immediate.
@@ -430,7 +426,7 @@ final class SnowEngine {
             flakes[i] = f
         }
 
-        ploughWithCursor(dt: dt, now: now)
+        ploughWithCursor(dt: dt)
 
         updateSurface(ground, dt: dt, now: now)
         for p in platforms.values { updateSurface(p, dt: dt, now: now) }
@@ -508,7 +504,7 @@ final class SnowEngine {
             // the edge so it doesn't appear to float past the corners. Use the
             // window's true coordinates (not clamped to the display) so the cap
             // stays aligned while the window is dragged partly off-screen.
-            let cornerInset: Float = w.isDock ? 18 : 12
+            let cornerInset: Float = w.isDock ? 4 : 8
             let x0 = Float(lr.minX) + cornerInset
             let x1 = Float(lr.maxX) - cornerInset
             let wWidth = x1 - x0
@@ -551,7 +547,7 @@ final class SnowEngine {
         let dockID = dockPlatformID
         if let dock = DockGeometry.strip(for: space) {
             // Keep the cap off the pill's very rounded ends.
-            let inset: Float = 18
+            let inset: Float = 4
             let dw = Float(dock.width) - inset * 2
             let dx0 = Float(dock.x0) + inset
             let dEdge = Float(dock.edgeY)
@@ -622,8 +618,9 @@ final class SnowEngine {
             iconIDs = iconIDs.filter { iconsSeen.contains($0.key) }
         }
 
-        for (id, p) in platforms where !seen.contains(id) {
-            shed(p, power: 0.5)
+        for (id, _) in platforms where !seen.contains(id) {
+            // Remove silently. Shedding here made a burst of snow flash across
+            // the screen when the Dock disappeared during a Space transition.
             platforms.removeValue(forKey: id)
         }
         // Drop caps on windows that just became full-screen, silently.
@@ -804,12 +801,14 @@ final class SnowEngine {
 
     // MARK: - Cursor
 
-    /// The cursor imparts velocity to the drift rather than teleporting columns.
-    /// The surface is then advected, so the snow flows, piles up in front of the
-    /// cursor and spills off the ends.
-    private func ploughWithCursor(dt: Float, now: CFTimeInterval) {
+    /// The cursor shoves the drift in discrete bites instead of stirring it like
+    /// a fluid. Snow only moves when the cursor has travelled far enough, and
+    /// each shove moves a small block into the next column. The result is a
+    /// powder that piles up in front of the cursor and spills in chunks.
+    private func ploughWithCursor(dt: Float) {
         guard cursorVisible else {
             hasLastCursor = false
+            hasLastPlough = false
             return
         }
 
@@ -823,37 +822,69 @@ final class SnowEngine {
         lastCursor = cursor
         hasLastCursor = true
 
-        guard abs(vx) > 20 else { return }
+        if !hasLastPlough {
+            lastPloughX = cx
+            hasLastPlough = true
+            return
+        }
 
-        let target = max(-380, min(380, vx))
+        let dx = cx - lastPloughX
+        guard abs(dx) >= 2.0, abs(vx) > 30 else { return }
+        lastPloughX = cx
+
+        let dir: Float = dx > 0 ? 1 : -1
+        let speed = min(abs(vx), 700)
         let down = ScreenGeometry.isMouseDown
-        let radius: Float = down ? 30 : 21
-        let gain = min(1, dt * 9)
+        let radius: Float = down ? 24 : 15
+        // One small bite of snow per shove. It moves into the next column only.
+        let bite = min(1.8, abs(dx) * 0.35)
+        guard bite > 0.02 else { return }
 
         for p in allPlatforms() {
             guard cx > p.x0 - radius, cx < p.x0 + p.width + radius else { continue }
-            guard p.u.count == p.heights.count else { continue }
-
+            let n = p.heights.count
             let i0 = max(0, Int((cx - radius - p.x0) / Platform.cell))
-            let i1 = min(p.heights.count - 1, Int((cx + radius - p.x0) / Platform.cell))
+            let i1 = min(n - 1, Int((cx + radius - p.x0) / Platform.cell))
             guard i0 <= i1 else { continue }
 
-            for i in i0...i1 {
+            // Push from the leading edge inward so a column cannot be moved
+            // twice in one shove.
+            let indices: StrideThrough<Int> = dir > 0
+                ? stride(from: i1, through: i0, by: -1)
+                : stride(from: i0, through: i1, by: 1)
+
+            for i in indices {
                 let colX = p.x0 + (Float(i) + 0.5) * Platform.cell
                 let h = p.heights[i]
-                if h < 0.08 { continue }
+                if h < 0.15 { continue }
                 let surface = surfaceY(p, x: colX)
                 // Only from above the window's top edge: otherwise grabbing the
                 // title bar to drag the window would plough the cap. Icons have
                 // their surface lower than the top of their 64 pt cell.
-                guard cy > surface - 16 && cy < p.edgeY + p.maxBaseOffset + 2 else { continue }
+                guard cy > surface - 18 && cy < p.edgeY + p.maxBaseOffset + 2 else { continue }
 
                 let d = abs(colX - cx)
                 guard d < radius else { continue }
-
                 let t = d / radius
-                let w = 1 - t * t
-                p.u[i] += (target - p.u[i]) * w * gain
+                // Push mostly the snow in front of the cursor. Snow behind
+                // the blade should stay put, like powder rather than a liquid.
+                let lead = (colX - cx) * dir
+                let w = (1 - t * t) * (lead > 0 ? 1.0 : 0.25)
+                let amount = min(h, bite * w)
+                guard amount > 0.001 else { continue }
+
+                let j = i + (dir > 0 ? 1 : -1)
+                if j >= 0 && j < n {
+                    // Powder resists being shoved into an already taller bank.
+                    if p.heights[j] < p.maxHeight &&
+                       (p.heights[j] < h + 1.2 || speed > 320) {
+                        p.heights[i] -= amount
+                        p.heights[j] += amount
+                    }
+                } else {
+                    p.heights[i] -= amount
+                    if dir > 0 { p.spillRight += amount } else { p.spillLeft += amount }
+                }
             }
         }
     }
@@ -867,16 +898,13 @@ final class SnowEngine {
     // MARK: - Surface flow
 
     private func updateSurface(_ p: Platform, dt: Float, now: CFTimeInterval) {
-        advect(p, dt: dt)
-        damp(p, dt: dt)
         relax(p)
         shedEdges(p, dt: dt, now: now)
-        emitSpillGrains(p, now: now)
+        shedEdgeFlakes(p, now: now)
     }
 
-    /// Snow over the edge leaves as a continuous trickle of individual grains,
-    /// not one lump. The height field only moves a tiny amount per frame, so a
-    /// steady stream falls for as long as the lip keeps overflowing.
+    /// Snow over the edge is collected as spill mass. It is released later in
+    /// small clusters, not as a continuous stream.
     private func shedEdges(_ p: Platform, dt: Float, now: CFTimeInterval) {
         let n = p.heights.count
         guard n > 8 else { return }
@@ -907,35 +935,44 @@ final class SnowEngine {
         spill(at: n - 1, side: 1)
     }
 
-    /// Drain whatever has spilled over an edge as one flake at a time. A short
-    /// cooldown keeps it reading as a stream of snow rather than a puff.
-    private func emitSpillGrains(_ p: Platform, now: CFTimeInterval) {
-        let mass = max(p.spillLeft, p.spillRight)
-        guard mass > 0.02, now >= p.nextGrain else { return }
-        // A light lip gets a slow trickle; a big push gets a denser pour. The
-        // cadence changes, not the direction, so it never looks like a burst.
-        let interval: CFTimeInterval = mass > 1.5 ? 0.02 : (mass > 0.5 ? 0.035 : 0.05)
-        p.nextGrain = now + interval
+    /// A lip that has collected too much snow releases it as a scattered
+    /// trickle: one flake at a time, from a random point across the last few
+    /// columns. The random position and cadence keep it from looking like a tap.
+    private func shedEdgeFlakes(_ p: Platform, now: CFTimeInterval) {
+        let total = p.spillLeft + p.spillRight
+        guard total > 0.05, now >= p.nextEdgeShed else { return }
 
         let side: Float = p.spillRight >= p.spillLeft ? 1 : -1
         let available = side > 0 ? p.spillRight : p.spillLeft
-        let take = min(available, 0.6)
+        guard available > 0.03 else { return }
+
+        // Pick a random point just outside the lip, not the same corner every
+        // time. The flakes must start beyond the cap so they fall past it
+        // instead of sinking through the snow.
+        let edgeWidth = min(12, max(4, p.width * 0.08))
+        let out = Float.random(in: 0...edgeWidth)
+        let x = side < 0 ? p.x0 - out : p.x0 + p.width + out
+        let edgeX = side < 0 ? p.x0 + 1 : p.x0 + p.width - 1
+        let y = surfaceY(p, x: edgeX) - Float.random(in: 0...2)
+        let mass = min(available, 0.5)
+
+        spawnGrain(x: x + Float.random(in: -2...2),
+                   y: y,
+                   vx: side * Float.random(in: 0...6) + Float.random(in: -3...3),
+                   vy: Float.random(in: 0...10),
+                   mass: mass,
+                   near: p.layer == .front,
+                   ignoreID: p.id)
+
         if side > 0 {
-            p.spillRight = max(0, p.spillRight - take)
+            p.spillRight = max(0, p.spillRight - mass)
         } else {
-            p.spillLeft = max(0, p.spillLeft - take)
+            p.spillLeft = max(0, p.spillLeft - mass)
         }
 
-        let edgeX = side < 0 ? p.x0 + 1 : p.x0 + p.width - 1
-        let y = surfaceY(p, x: edgeX) - 1.5
-        // Let gravity do the work. A tiny outward nudge keeps the flake clear
-        // of the lip; anything stronger reads as the snow being shot sideways.
-        spawnGrain(x: side < 0 ? p.x0 - 3 : p.x0 + p.width + 3,
-                   y: y,
-                   vx: side * Float.random(in: 0...4),
-                   vy: Float.random(in: 0...4),
-                   mass: take, near: p.layer == .front,
-                   ignoreID: p.id)
+        // Irregular cadence, a little faster when more snow is waiting.
+        let base: Double = total > 1.5 ? 0.05 : (total > 0.5 ? 0.09 : 0.14)
+        p.nextEdgeShed = now + Double.random(in: base...(base * 1.9))
     }
 
     /// Desktop piles stay low by losing a small wedge off one side every so
@@ -993,83 +1030,30 @@ final class SnowEngine {
         } else {
             p.spillRight += mass
         }
-        p.nextGrain = min(p.nextGrain, now)
-    }
-
-    /// Conservative upwind transport of the height field along `u`.
-    private func advect(_ p: Platform, dt: Float) {
-        let n = p.heights.count
-        guard n > 2, p.u.count == n, p.delta.count == n else { return }
-
-        var moving = false
-        for v in p.u where abs(v) > 2 { moving = true; break }
-        guard moving else { return }
-
-        let substeps = 2
-        let h = dt / Float(substeps)
-
-        for _ in 0..<substeps {
-            for i in 0..<n { p.delta[i] = 0 }
-
-            for i in 0..<n {
-                let cour = p.u[i] * h / Platform.cell
-                if cour > 0.0001 {
-                    let f = p.heights[i] * min(1, cour)
-                    if i < n - 1 {
-                        p.delta[i] -= f
-                        p.delta[i + 1] += f
-                    } else {
-                        p.delta[i] -= f
-                        p.spillRight += f
-                    }
-                } else if cour < -0.0001 {
-                    let f = p.heights[i] * min(1, -cour)
-                    if i > 0 {
-                        p.delta[i] -= f
-                        p.delta[i - 1] += f
-                    } else {
-                        p.delta[i] -= f
-                        p.spillLeft += f
-                    }
-                }
-            }
-
-            for i in 0..<n {
-                p.heights[i] = max(0, min(p.maxHeight, p.heights[i] + p.delta[i]))
-            }
-        }
-    }
-
-    private func damp(_ p: Platform, dt: Float) {
-        // Snow is high-friction: velocity dies quickly and small motions do
-        // nothing at all.
-        let f = max(0, 1 - dt * 6.5)
-        for i in p.u.indices {
-            p.u[i] *= f
-            if abs(p.u[i]) < 35 { p.u[i] = 0 }
-        }
+        p.nextEdgeShed = min(p.nextEdgeShed, now)
     }
 
     // MARK: - Relaxation
 
-    /// Snow slumps sideways until it reaches an angle of repose.
+    /// Snow slumps sideways until it reaches an angle of repose. Powder holds a
+    /// steeper edge than a liquid, so it only gives way in small chunks.
     private func relax(_ p: Platform) {
         let n = p.heights.count
         guard n > 2 else { return }
-        let slope: Float = 1.6
+        let slope: Float = 2.2
 
-        for _ in 0..<2 {
+        for _ in 0..<1 {
             for i in 0..<(n - 1) {
                 let a = p.heights[i]
                 let b = p.heights[i + 1]
                 if a < 0.05 && b < 0.05 { continue }
                 let d = a - b
                 if d > slope {
-                    let m = (d - slope) * 0.5
+                    let m = (d - slope) * 0.30
                     p.heights[i] = a - m
                     p.heights[i + 1] = b + m
                 } else if d < -slope {
-                    let m = (-d - slope) * 0.5
+                    let m = (-d - slope) * 0.30
                     p.heights[i] = a + m
                     p.heights[i + 1] = b - m
                 }
@@ -1156,7 +1140,7 @@ final class SnowEngine {
 
             // Curve the very end a little so it doesn't end in a razor cut;
             // anything thicker spills off as falling particles.
-            let edgeCols = min(4, Float(n) * 0.2)
+            let edgeCols = p.isDock ? 1.5 : min(3, Float(n) * 0.2)
             let dEdge = Float(min(i, n - 2 - i))
             var fade: Float = 1
             if dEdge < edgeCols {
