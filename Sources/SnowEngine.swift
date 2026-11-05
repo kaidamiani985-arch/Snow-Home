@@ -546,8 +546,10 @@ final class SnowEngine {
         // snow sits on top of the pill instead of behind it.
         let dockID = dockPlatformID
         if let dock = DockGeometry.strip(for: space) {
-            // Keep the cap off the pill's very rounded ends.
-            let inset: Float = 4
+            // Use the full pill width; the rounded ends are handled by a
+            // curved base profile so the snow follows the corner instead of
+            // hanging off it.
+            let inset: Float = 0
             let dw = Float(dock.width) - inset * 2
             let dx0 = Float(dock.x0) + inset
             let dEdge = Float(dock.edgeY)
@@ -564,9 +566,13 @@ final class SnowEngine {
                                                  edgeY: dEdge, width: dw,
                                                  zIndex: -1, isDock: true)
                 }
-                // The longer the app runs, the taller the Dock bank is allowed
-                // to get. It keeps growing until it overflows off the ends.
-                platforms[dockID]?.maxHeight = min(90, 36 + time * 0.025)
+                if let p = platforms[dockID] {
+                    // The longer the app runs, the taller the Dock bank is
+                    // allowed to get. It keeps growing until it overflows off
+                    // the ends.
+                    p.maxHeight = min(90, 36 + time * 0.025)
+                    setRoundedCornerProfile(p, radius: 20)
+                }
             }
         }
 
@@ -618,10 +624,19 @@ final class SnowEngine {
             iconIDs = iconIDs.filter { iconsSeen.contains($0.key) }
         }
 
-        for (id, _) in platforms where !seen.contains(id) {
-            // Remove silently. Shedding here made a burst of snow flash across
-            // the screen when the Dock disappeared during a Space transition.
-            platforms.removeValue(forKey: id)
+        let dockHidden = NSApplication.shared.currentSystemPresentationOptions.contains(.hideDock)
+        let spaceChanging = SpaceMonitor.shared.isSpaceTransitioning
+        for (id, p) in platforms where !seen.contains(id) {
+            if p.isDock || dockHidden || spaceChanging {
+                // The Dock is leaving with a Space transition; do not dump its
+                // snow in a visible flash.
+                platforms.removeValue(forKey: id)
+            } else {
+                // A window really closed: let its cap crumble onto whatever is
+                // below instead of just disappearing.
+                shed(p, power: 0.7)
+                platforms.removeValue(forKey: id)
+            }
         }
         // Drop caps on windows that just became full-screen, silently.
         for id in skippedFullScreen {
@@ -637,6 +652,23 @@ final class SnowEngine {
         nextIconID += 1
         iconIDs[title] = id
         return id
+    }
+
+    /// Shape the top of a rounded platform (the Dock) so snow follows the
+    /// curved ends instead of hanging over them.
+    private func setRoundedCornerProfile(_ p: Platform, radius: Float) {
+        let n = p.heights.count
+        guard n > 2 else { return }
+        var offsets = [Float](repeating: 0, count: n)
+        let r = max(1, radius)
+        for i in 0..<n {
+            let d = min(Float(i), Float(n - 1 - i)) * Platform.cell
+            if d < r {
+                let x = r - d
+                offsets[i] = r - sqrt(max(0, r * r - x * x))
+            }
+        }
+        p.baseOffsets = offsets
     }
 
     /// A drift sitting on a window should not be drawn over a window that is
@@ -833,12 +865,8 @@ final class SnowEngine {
         lastPloughX = cx
 
         let dir: Float = dx > 0 ? 1 : -1
-        let speed = min(abs(vx), 700)
         let down = ScreenGeometry.isMouseDown
         let radius: Float = down ? 24 : 15
-        // One small bite of snow per shove. It moves into the next column only.
-        let bite = min(1.8, abs(dx) * 0.35)
-        guard bite > 0.02 else { return }
 
         for p in allPlatforms() {
             guard cx > p.x0 - radius, cx < p.x0 + p.width + radius else { continue }
@@ -847,13 +875,7 @@ final class SnowEngine {
             let i1 = min(n - 1, Int((cx + radius - p.x0) / Platform.cell))
             guard i0 <= i1 else { continue }
 
-            // Push from the leading edge inward so a column cannot be moved
-            // twice in one shove.
-            let indices: StrideThrough<Int> = dir > 0
-                ? stride(from: i1, through: i0, by: -1)
-                : stride(from: i0, through: i1, by: 1)
-
-            for i in indices {
+            for i in i0...i1 {
                 let colX = p.x0 + (Float(i) + 0.5) * Platform.cell
                 let h = p.heights[i]
                 if h < 0.15 { continue }
@@ -869,22 +891,21 @@ final class SnowEngine {
                 // Push mostly the snow in front of the cursor. Snow behind
                 // the blade should stay put, like powder rather than a liquid.
                 let lead = (colX - cx) * dir
-                let w = (1 - t * t) * (lead > 0 ? 1.0 : 0.25)
-                let amount = min(h, bite * w)
-                guard amount > 0.001 else { continue }
+                let w = (1 - t * t) * (lead > 0 ? 1.0 : 0.20)
 
-                let j = i + (dir > 0 ? 1 : -1)
-                if j >= 0 && j < n {
-                    // Powder resists being shoved into an already taller bank.
-                    if p.heights[j] < p.maxHeight &&
-                       (p.heights[j] < h + 1.2 || speed > 320) {
-                        p.heights[i] -= amount
-                        p.heights[j] += amount
-                    }
-                } else {
-                    p.heights[i] -= amount
-                    if dir > 0 { p.spillRight += amount } else { p.spillLeft += amount }
-                }
+                // Break a bite of snow loose as real grains instead of sliding
+                // the height field around. The grains fly forward, fall under
+                // gravity and build the pile ahead of the cursor.
+                let detach = min(h, 0.45 * w)
+                guard detach > 0.03 else { continue }
+                p.heights[i] -= detach
+
+                spawnGrain(x: colX + Float.random(in: -1.5...1.5),
+                           y: surface - Float.random(in: 0...1.5),
+                           vx: dir * Float.random(in: 30...80) + Float.random(in: -8...8),
+                           vy: Float.random(in: -28...4),
+                           mass: detach,
+                           near: p.layer == .front)
             }
         }
     }
@@ -1140,7 +1161,7 @@ final class SnowEngine {
 
             // Curve the very end a little so it doesn't end in a razor cut;
             // anything thicker spills off as falling particles.
-            let edgeCols = p.isDock ? 1.5 : min(3, Float(n) * 0.2)
+            let edgeCols = p.isDock ? 10 : min(3, Float(n) * 0.2)
             let dEdge = Float(min(i, n - 2 - i))
             var fade: Float = 1
             if dEdge < edgeCols {

@@ -17,6 +17,14 @@ final class SpaceMonitor {
     private var connection: UInt32 = 0
     private var lastCheck: CFTimeInterval = 0
     private(set) var isFullScreen = false
+    private(set) var currentSpaceID: UInt64 = 0
+    private var lastSpaceChange: CFTimeInterval = 0
+
+    /// True briefly after the active Space changes. Used to suppress shedding
+    /// while windows are sliding in and out during the transition.
+    var isSpaceTransitioning: Bool {
+        CACurrentMediaTime() - lastSpaceChange < 0.7
+    }
 
     private init() {
         guard let handle = dlopen(
@@ -48,10 +56,18 @@ final class SpaceMonitor {
 
         // Space type 4 is a full-screen Space. 0 is a normal desktop.
         var full = false
+        var spaceID: UInt64 = 0
         for display in displays {
             guard let current = display["Current Space"] as? [String: Any] else { continue }
             let type = (current["type"] as? NSNumber)?.intValue ?? 0
             if type == 4 { full = true }
+            if let id = (current["ManagedSpaceID"] as? NSNumber)?.uint64Value {
+                spaceID = id
+            }
+        }
+        if spaceID != 0 && spaceID != currentSpaceID {
+            currentSpaceID = spaceID
+            lastSpaceChange = CACurrentMediaTime()
         }
         isFullScreen = full
     }

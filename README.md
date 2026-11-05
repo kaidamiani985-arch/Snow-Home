@@ -28,6 +28,7 @@
 
 - Snow accumulates on window tops, the Dock, and desktop file icons.
 - Caps hold their shape, then crumble over the edges as loose flakes.
+- Closing a window drops its snow onto whatever is below.
 - Snow lands on normal and maximised windows.
 - Full-screen apps and Spaces stay snow-free.
 - Dynamic wind and three snowfall densities.
