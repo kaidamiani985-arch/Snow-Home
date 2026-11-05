@@ -1005,8 +1005,8 @@ final class SnowEngine {
             let nx = dx / d
             let ny = dy / d
             vx += (nx * 0.45 + dirX * 0.90) * impulse * falloff * 6
-            vy += (ny * 0.35 + dirY * 0.35) * impulse * falloff * 4
-            vy -= 22 * falloff * dt * 4
+            vy += (ny * 0.25 + dirY * 0.25) * impulse * falloff * 3
+            vy -= 14 * falloff * dt * 4
         }
 
         for i in flakes.indices {
