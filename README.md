@@ -21,6 +21,7 @@
 | Action | What it does |
 |---|---|
 | Move the cursor through a drift | Ploughs the snow around |
+| Move the cursor through falling snow | Stirs it out of the way |
 | Shake a window left and right | Knocks the snow off |
 | Menu bar snowflake | Snowfall on/off, density, clear, quit |
 
@@ -28,6 +29,8 @@
 
 - Snow accumulates on window tops, the Dock, and desktop file icons.
 - Caps hold their shape, then crumble over the edges as loose flakes.
+- A varied snowfall with mixed flake sizes and shapes.
+- The cursor stirs both the drifts and the snow in the air.
 - Minimising or closing a window drops its snow onto whatever is below.
 - Snow lands on normal and maximised windows.
 - Full-screen apps and Spaces stay snow-free.
