@@ -68,10 +68,17 @@ enum Shaders {
             + 0.08 * sin(ang * 7.0 - seedA * 1.7);
         float2 q = uv * float2(0.88, 1.12);
         float r = length(q) / wob;
-        if (r > 1.0) discard_fragment();
 
-        float body = smoothstep(1.0, 0.30, r);
-        float core = smoothstep(0.60, 0.0, r);
+        // Some flakes get six soft lobes; others stay irregular blobs. This
+        // keeps the field from looking like one repeated particle.
+        float star = smoothstep(0.68, 0.96, in.seed);
+        float lobes = 0.5 + 0.5 * cos(ang * 6.0 + seedA * 0.5);
+        float rr = mix(r, r * (0.74 + 0.46 * lobes), star * 0.75);
+        if (rr > 1.0) discard_fragment();
+
+        float body = smoothstep(1.0, 0.30, rr);
+        float coreEdge = 0.45 + 0.22 * fract(in.seed * 3.7);
+        float core = smoothstep(coreEdge, 0.0, rr);
         float3 col = mix(float3(0.82, 0.88, 1.0), float3(1.0), core);
 
         return float4(col, body * in.alpha);

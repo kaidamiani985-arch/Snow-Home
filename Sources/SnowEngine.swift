@@ -80,16 +80,35 @@ final class Platform {
         self.baseOffsets = [Float](repeating: 0, count: n)
     }
 
-    /// Smooth low-frequency variation so a saturated cap still has peaks and
-    /// hollows instead of a machined flat top.
+    /// Multi-scale value noise so a flat cap has organic lumps instead of a
+    /// repeating sine-wave pattern.
     private static func makeRough(count: Int, seed: Float) -> [Float] {
         var r = [Float](repeating: 1, count: count)
+        func hash(_ x: Int, _ s: Float) -> Float {
+            let v = sin(Float(x) * 12.9898 + s * 78.233) * 43758.5453
+            return v - floor(v)
+        }
+        func smoothNoise(step: Int, offset: Int) -> [Float] {
+            var out = [Float](repeating: 0, count: count)
+            for i in 0..<count {
+                let t = Float(i) / Float(step)
+                let i0 = Int(floor(t))
+                let f = t - Float(i0)
+                let a = hash(i0 + offset, seed)
+                let b = hash(i0 + 1 + offset, seed)
+                let s = f * f * (3 - 2 * f)
+                out[i] = a + (b - a) * s
+            }
+            return out
+        }
+        let low = smoothNoise(step: 41, offset: 0)
+        let mid = smoothNoise(step: 13, offset: 1000)
         for i in 0..<count {
-            let t = Float(i)
-            let v = 0.55 * sin(t * 0.21 + seed)
-                  + 0.30 * sin(t * 0.53 + seed * 1.7)
-                  + 0.15 * sin(t * 0.11 + seed * 0.6)
-            r[i] = 1.0 + v * 0.30
+            let jitter = hash(i, seed + 7.7) * 2 - 1
+            let v = (low[i] - 0.5) * 0.62
+                  + (mid[i] - 0.5) * 0.28
+                  + jitter * 0.10
+            r[i] = max(0.55, 1.0 + v * 0.70)
         }
         return r
     }
@@ -189,6 +208,8 @@ final class SnowEngine {
     private var hasLastCursor = false
     private var lastPloughX: Float = 0
     private var hasLastPlough = false
+    private var cursorVX: Float = 0
+    private var cursorVY: Float = 0
     private var intensity: Float = 1.0
     /// Whole-screen budget for automatic icon avalanches. Interaction-driven
     /// grains bypass this so pushing snow still feels immediate.
@@ -281,9 +302,9 @@ final class SnowEngine {
         f.enabled = Float.random(in: 0..<1) < intensity
         // Every flake gets its own air resistance, drift and wind sensitivity,
         // otherwise the whole field moves as one sheet.
-        f.drift = Float.random(in: -15...15)
-        f.windFactor = Float.random(in: 0.2...0.9)
-        f.terminal = Float.random(in: 32...112)
+        f.drift = Float.random(in: -28...28)
+        f.windFactor = Float.random(in: 0.15...0.95)
+        f.terminal = Float.random(in: 26...138)
 
         if let forced = forceLayer {
             f.near = forced
@@ -291,12 +312,28 @@ final class SnowEngine {
             f.near = Float.random(in: 0..<1) < 0.18
         }
 
+        // A real snowfall is a mixture: mostly tiny specks, a few medium
+        // flakes, and the occasional large soft one close to the camera.
+        let roll = Float.random(in: 0..<1)
         if f.near {
-            f.size = Float.random(in: 1.0...2.0)
-            f.alpha = Float.random(in: 0.18...0.42)
+            if roll < 0.80 {
+                f.size = Float.random(in: 0.9...1.8)
+                f.alpha = Float.random(in: 0.18...0.42)
+            } else {
+                f.size = Float.random(in: 2.0...3.4)
+                f.alpha = Float.random(in: 0.10...0.26)
+            }
         } else {
-            f.size = Float.random(in: 1.4...3.4)
-            f.alpha = Float.random(in: 0.55...0.95)
+            if roll < 0.70 {
+                f.size = Float.random(in: 1.0...2.1)
+                f.alpha = Float.random(in: 0.40...0.80)
+            } else if roll < 0.94 {
+                f.size = Float.random(in: 2.1...3.3)
+                f.alpha = Float.random(in: 0.60...0.95)
+            } else {
+                f.size = Float.random(in: 3.3...5.0)
+                f.alpha = Float.random(in: 0.28...0.55)
+            }
         }
     }
 
@@ -427,6 +464,7 @@ final class SnowEngine {
         }
 
         ploughWithCursor(dt: dt)
+        pushFallingSnow(dt: dt)
 
         updateSurface(ground, dt: dt, now: now)
         for p in platforms.values { updateSurface(p, dt: dt, now: now) }
@@ -556,10 +594,9 @@ final class SnowEngine {
         // snow sits on top of the pill instead of behind it.
         let dockID = dockPlatformID
         if let dock = DockGeometry.strip(for: space) {
-            // Use the full pill width; the rounded ends are handled by a
-            // curved base profile so the snow follows the corner instead of
-            // hanging off it.
-            let inset: Float = 0
+            // The pill estimate is a little wider than the visible Dock.
+            // Pull the cap in to the real rounded edge, then follow the curve.
+            let inset: Float = 12
             let dw = Float(dock.width) - inset * 2
             let dx0 = Float(dock.x0) + inset
             let dEdge = Float(dock.edgeY)
@@ -858,11 +895,15 @@ final class SnowEngine {
         let cy = Float(cursor.y)
 
         var vx: Float = 0
+        var vy: Float = 0
         if hasLastCursor {
             vx = (cx - Float(lastCursor.x)) / max(dt, 0.001)
+            vy = (cy - Float(lastCursor.y)) / max(dt, 0.001)
         }
         lastCursor = cursor
         hasLastCursor = true
+        cursorVX = vx
+        cursorVY = vy
 
         if !hasLastPlough {
             lastPloughX = cx
@@ -875,6 +916,7 @@ final class SnowEngine {
         lastPloughX = cx
 
         let dir: Float = dx > 0 ? 1 : -1
+        let speed = min(abs(vx), 700)
         let down = ScreenGeometry.isMouseDown
         let radius: Float = down ? 24 : 15
 
@@ -902,21 +944,82 @@ final class SnowEngine {
                 // the blade should stay put, like powder rather than a liquid.
                 let lead = (colX - cx) * dir
                 let w = (1 - t * t) * (lead > 0 ? 1.0 : 0.20)
+                guard w > 0.01 else { continue }
 
-                // Break a bite of snow loose as real grains instead of sliding
-                // the height field around. The grains fly forward, fall under
-                // gravity and build the pile ahead of the cursor.
-                let detach = min(h, 0.45 * w)
-                guard detach > 0.03 else { continue }
-                p.heights[i] -= detach
+                // Part of the bite is thrown forward as grains; the rest is
+                // shoved into the next column so the pile actually moves.
+                let detach = min(h, 0.20 * w)
+                let shove = min(max(0, h - detach), 0.70 * w)
+                let j = i + (dir > 0 ? 1 : -1)
 
+                if j >= 0 && j < n {
+                    if p.heights[j] < p.maxHeight &&
+                       (p.heights[j] < h + 1.2 || speed > 320) {
+                        p.heights[i] -= detach + shove
+                        p.heights[j] += shove
+                    } else {
+                        // The bank ahead is too tall; only the loose spray
+                        // breaks off.
+                        p.heights[i] -= detach
+                    }
+                } else {
+                    // Pushed over the end: the whole bite falls away.
+                    p.heights[i] -= detach + shove
+                }
+
+                let falling = (j < 0 || j >= n) ? detach + shove : detach
+                guard falling > 0.02 else { continue }
                 spawnGrain(x: colX + Float.random(in: -1.5...1.5),
                            y: surface - Float.random(in: 0...1.5),
                            vx: dir * Float.random(in: 30...80) + Float.random(in: -8...8),
                            vy: Float.random(in: -28...4),
-                           mass: detach,
+                           mass: falling,
                            near: p.layer == .front)
             }
+        }
+    }
+
+    /// A moving cursor disturbs snow that is already in the air, not just the
+    /// drifts sitting on surfaces.
+    private func pushFallingSnow(dt: Float) {
+        guard cursorVisible else { return }
+        let speed = sqrt(cursorVX * cursorVX + cursorVY * cursorVY)
+        guard speed > 40 else { return }
+
+        let cx = Float(cursor.x)
+        let cy = Float(cursor.y)
+        let radius: Float = 46
+        let invSpeed = 1 / max(1, speed)
+        let dirX = cursorVX * invSpeed
+        let dirY = cursorVY * invSpeed
+        let strength = min(1, speed / 650)
+        let impulse = (55 + 130 * strength) * dt
+
+        func disturb(_ x: Float, _ y: Float, _ vx: inout Float, _ vy: inout Float) {
+            let dx = x - cx
+            let dy = y - cy
+            let d2 = dx * dx + dy * dy
+            guard d2 < radius * radius else { return }
+            let d = sqrt(max(1, d2))
+            let falloff = 1 - d / radius
+            let nx = dx / d
+            let ny = dy / d
+            vx += (nx * 0.45 + dirX * 0.90) * impulse * falloff * 6
+            vy += (ny * 0.35 + dirY * 0.35) * impulse * falloff * 4
+            vy -= 22 * falloff * dt * 4
+        }
+
+        for i in flakes.indices {
+            var f = flakes[i]
+            guard f.enabled else { continue }
+            disturb(f.x, f.y, &f.vx, &f.vy)
+            flakes[i] = f
+        }
+        for i in grains.indices {
+            var g = grains[i]
+            guard g.enabled else { continue }
+            disturb(g.x, g.y, &g.vx, &g.vy)
+            grains[i] = g
         }
     }
 
