@@ -430,16 +430,16 @@ final class SnowEngine {
                 f.rot += f.spin * dt
             }
 
-            if let wall = firstVerticalCrossed(x: f.x, y: f.y) {
-                wall.depositVertical(y: f.y,
-                                     amount: f.isClump ? max(1.0, f.mass) : 0.8)
-                respawn(&f, atTop: true, forceLayer: f.near)
-                flakes[i] = f
-                continue
+            // The screen edge is a soft border: flakes are nudged back inside
+            // and keep falling. They must not stick to the edge or wrap around.
+            let edge: Float = 2
+            if f.x < edge {
+                f.x = edge
+                if f.vx < 0 { f.vx = -f.vx * 0.25 }
+            } else if f.x > width - edge {
+                f.x = width - edge
+                if f.vx > 0 { f.vx = -f.vx * 0.25 }
             }
-
-            if f.x < -30 { f.x = width + 25 }
-            if f.x > width + 30 { f.x = -25 }
 
             if f.near {
                 if let p = firstPlatformCrossed(from: prevY, to: f.y, x: f.x, layer: .front) {
@@ -680,33 +680,6 @@ final class SnowEngine {
             }
         }
 
-        // Screen-edge walls. Snow blown or pushed off the sides collects in a
-        // vertical bank instead of wrapping around the screen.
-        let wallTop = Float(space.topInset)
-        let wallHeight = height - wallTop
-        let wallIDs: [(CGWindowID, Float, Float)] = [
-            (CGWindowID(800_001), 0, 1),
-            (CGWindowID(800_002), width, -1)
-        ]
-        for (id, edgeX, side) in wallIDs {
-            seen.insert(id)
-            if let p = platforms[id] {
-                p.x0 = edgeX
-                p.edgeY = wallTop
-                p.verticalSide = side
-                p.setWidth(wallHeight)
-            } else {
-                let p = Platform(id: id, layer: .back, x0: edgeX, edgeY: wallTop,
-                                 width: wallHeight, zIndex: 30_000, isDock: false)
-                p.isVertical = true
-                p.verticalSide = side
-                p.maxHeight = 28
-                p.shedFraction = 0.9
-                p.renderCap = 28
-                platforms[id] = p
-            }
-        }
-
         // Desktop icons (requires Accessibility). Each icon's platform uses the
         // real artwork silhouette: a folder gets its tab, a document a narrow
         // page, an image its preview shape.
@@ -902,14 +875,18 @@ final class SnowEngine {
             g.rot += g.spin * dt
             g.vx *= max(0, 1 - dt * 0.9)
 
-            if let wall = firstVerticalCrossed(x: g.x, y: g.y) {
-                wall.depositVertical(y: g.y, amount: g.mass)
-                g.enabled = false
-                grains[i] = g
-                continue
+            // Keep grains inside the screen so they keep falling instead of
+            // sticking to a wall or vanishing off the side.
+            let edge: Float = 2
+            if g.x < edge {
+                g.x = edge
+                if g.vx < 0 { g.vx = -g.vx * 0.20 }
+            } else if g.x > width - edge {
+                g.x = width - edge
+                if g.vx > 0 { g.vx = -g.vx * 0.20 }
             }
 
-            if g.x < -30 || g.x > width + 30 || g.y > height + 40 {
+            if g.y > height + 40 {
                 g.enabled = false
                 grains[i] = g
                 continue
