@@ -49,6 +49,9 @@ final class Platform {
     var shedFraction: Float = 0.78
     /// Desktop file icon: snow sits on its artwork silhouette and piles higher.
     var isIcon: Bool = false
+    /// Screen-edge wall: the height profile runs vertically and grows inward.
+    var isVertical: Bool = false
+    var verticalSide: Float = 1   // +1 = left edge, -1 = right edge
     let noiseSeed: Float
     var zIndex: Int
     var isDock: Bool
@@ -135,6 +138,20 @@ final class Platform {
         guard idx >= 0 && idx < heights.count else { return }
         // Spread each landing across a few columns so the cap reads as a
         // continuous drift instead of isolated spikes.
+        let kernel: [Float] = [0.02, 0.05, 0.10, 0.17, 0.32, 0.17, 0.10, 0.05, 0.02]
+        for k in 0..<9 {
+            let j = idx + k - 4
+            guard j >= 0 && j < heights.count else { continue }
+            heights[j] = min(heights[j] + amount * kernel[k], maxHeight)
+        }
+    }
+
+    /// Deposit along a vertical screen-edge wall. `y` is the screen-space
+    /// height of the landing flake.
+    @inline(__always)
+    func depositVertical(y: Float, amount: Float) {
+        let idx = Int((y - edgeY) / Platform.cell)
+        guard idx >= 0 && idx < heights.count else { return }
         let kernel: [Float] = [0.02, 0.05, 0.10, 0.17, 0.32, 0.17, 0.10, 0.05, 0.02]
         for k in 0..<9 {
             let j = idx + k - 4
@@ -413,6 +430,14 @@ final class SnowEngine {
                 f.rot += f.spin * dt
             }
 
+            if let wall = firstVerticalCrossed(x: f.x, y: f.y) {
+                wall.depositVertical(y: f.y,
+                                     amount: f.isClump ? max(1.0, f.mass) : 0.8)
+                respawn(&f, atTop: true, forceLayer: f.near)
+                flakes[i] = f
+                continue
+            }
+
             if f.x < -30 { f.x = width + 25 }
             if f.x > width + 30 { f.x = -25 }
 
@@ -467,7 +492,13 @@ final class SnowEngine {
         pushFallingSnow(dt: dt)
 
         updateSurface(ground, dt: dt, now: now)
-        for p in platforms.values { updateSurface(p, dt: dt, now: now) }
+        for p in platforms.values {
+            if p.isVertical {
+                relax(p)
+            } else {
+                updateSurface(p, dt: dt, now: now)
+            }
+        }
         updateGrains(dt: dt, gravity: gravity)
 
         buildVertices()
@@ -481,10 +512,18 @@ final class SnowEngine {
 
     /// Y coordinate of the top of whatever snow is already sitting on `p` at x.
     private func surfaceY(_ p: Platform, x: Float) -> Float {
+        guard !p.isVertical else { return p.edgeY }
         let idx = Int((x - p.x0) / Platform.cell)
         guard idx >= 0 && idx < p.heights.count else { return p.edgeY }
         let base = p.edgeY + (idx < p.baseOffsets.count ? p.baseOffsets[idx] : 0)
         return base - p.heights[idx]
+    }
+
+    /// X coordinate of the inner face of a vertical screen-edge wall at y.
+    private func surfaceX(_ p: Platform, y: Float) -> Float {
+        let idx = Int((y - p.edgeY) / Platform.cell)
+        guard idx >= 0 && idx < p.heights.count else { return p.x0 }
+        return p.x0 + p.verticalSide * p.heights[idx]
     }
 
     /// First platform surface the flake reaches this frame. Uses the top of the
@@ -496,6 +535,7 @@ final class SnowEngine {
         var bestSurface: Float = .greatestFiniteMagnitude
 
         for p in platforms.values where p.layer == layer {
+            if p.isVertical { continue }
             if let ignoring, p.id == ignoring { continue }
             guard x >= p.x0 && x <= p.x0 + p.width else { continue }
             let surface = surfaceY(p, x: x)
@@ -506,6 +546,21 @@ final class SnowEngine {
             }
         }
         return best
+    }
+
+    /// A flake or grain that has blown into a screen-edge wall.
+    private func firstVerticalCrossed(x: Float, y: Float) -> Platform? {
+        for p in platforms.values where p.isVertical {
+            let idx = Int((y - p.edgeY) / Platform.cell)
+            guard idx >= 0 && idx < p.heights.count else { continue }
+            let surface = p.x0 + p.verticalSide * p.heights[idx]
+            if p.verticalSide > 0 {
+                if x <= surface { return p }
+            } else {
+                if x >= surface { return p }
+            }
+        }
+        return nil
     }
 
     // MARK: - Platform sync
@@ -559,10 +614,12 @@ final class SnowEngine {
 
                 // A window being minimized shrinks and slides toward the Dock.
                 // Drop the cap before the shrinking platform truncates it, so
-                // the snow falls instead of vanishing with the window.
+                // the snow falls instead of vanishing with the window. The
+                // thresholds are deliberately large so a Space swipe, which
+                // also scales the window, does not shed the snow.
                 if p.totalSnow > 0.5 &&
-                   wWidth < p.width * 0.90 &&
-                   edgeY > p.edgeY + 4 {
+                   wWidth < p.width * 0.82 &&
+                   edgeY > p.edgeY + 14 {
                     shed(p, power: 1.0)
                 }
 
@@ -620,6 +677,33 @@ final class SnowEngine {
                     p.maxHeight = min(90, 36 + time * 0.025)
                     setRoundedCornerProfile(p, radius: 20)
                 }
+            }
+        }
+
+        // Screen-edge walls. Snow blown or pushed off the sides collects in a
+        // vertical bank instead of wrapping around the screen.
+        let wallTop = Float(space.topInset)
+        let wallHeight = height - wallTop
+        let wallIDs: [(CGWindowID, Float, Float)] = [
+            (CGWindowID(800_001), 0, 1),
+            (CGWindowID(800_002), width, -1)
+        ]
+        for (id, edgeX, side) in wallIDs {
+            seen.insert(id)
+            if let p = platforms[id] {
+                p.x0 = edgeX
+                p.edgeY = wallTop
+                p.verticalSide = side
+                p.setWidth(wallHeight)
+            } else {
+                let p = Platform(id: id, layer: .back, x0: edgeX, edgeY: wallTop,
+                                 width: wallHeight, zIndex: 30_000, isDock: false)
+                p.isVertical = true
+                p.verticalSide = side
+                p.maxHeight = 28
+                p.shedFraction = 0.9
+                p.renderCap = 28
+                platforms[id] = p
             }
         }
 
@@ -723,6 +807,7 @@ final class SnowEngine {
     private func updateOcclusion(rects: [(rect: CGRect, z: Int)]) {
         let cell = Platform.cell
         for p in platforms.values {
+            if p.isVertical { continue }
             let n = p.heights.count
             if p.occluded.count != n {
                 p.occluded = [Bool](repeating: false, count: n)
@@ -816,6 +901,13 @@ final class SnowEngine {
             g.y += g.vy * dt
             g.rot += g.spin * dt
             g.vx *= max(0, 1 - dt * 0.9)
+
+            if let wall = firstVerticalCrossed(x: g.x, y: g.y) {
+                wall.depositVertical(y: g.y, amount: g.mass)
+                g.enabled = false
+                grains[i] = g
+                continue
+            }
 
             if g.x < -30 || g.x > width + 30 || g.y > height + 40 {
                 g.enabled = false
@@ -921,6 +1013,7 @@ final class SnowEngine {
         let radius: Float = down ? 24 : 15
 
         for p in allPlatforms() {
+            guard !p.isVertical else { continue }
             guard cx > p.x0 - radius, cx < p.x0 + p.width + radius else { continue }
             let n = p.heights.count
             let i0 = max(0, Int((cx - radius - p.x0) / Platform.cell))
@@ -1234,7 +1327,9 @@ final class SnowEngine {
 
         buildDrift(ground, into: &backDrift)
         for p in platforms.values {
-            if p.layer == .front {
+            if p.isVertical {
+                buildVerticalDrift(p, into: &backDrift)
+            } else if p.layer == .front {
                 buildDrift(p, into: &frontDrift)
             } else {
                 buildDrift(p, into: &backDrift)
@@ -1316,6 +1411,72 @@ final class SnowEngine {
                 out.append(DriftVertex(pos: SIMD2<Float>(xa, ya),        par: 1.12, alpha: alpha))
                 out.append(DriftVertex(pos: SIMD2<Float>(xb, yb - 1.0),  par: 1.25, alpha: alpha * 0.9))
                 out.append(DriftVertex(pos: SIMD2<Float>(xb, yb),        par: 1.12, alpha: alpha))
+            }
+        }
+    }
+
+    /// Mesh a vertical screen-edge drift. The profile runs down the screen and
+    /// grows inward from the edge.
+    private func buildVerticalDrift(_ p: Platform, into out: inout [DriftVertex]) {
+        let n = p.heights.count
+        guard n > 1 else { return }
+        let cell = Platform.cell
+
+        var peak: Float = 0
+        for h in p.heights where h > peak { peak = h }
+        guard peak > 0.2 else { return }
+        let scale: Float = peak > p.renderCap ? max(0.05, p.renderCap / peak) : 1
+
+        for i in 0..<(n - 1) {
+            let h0 = p.heights[i]
+            let h1 = p.heights[i + 1]
+            if h0 < 0.12 && h1 < 0.12 { continue }
+
+            let hm2 = i >= 2 ? p.heights[i - 2] : h0
+            let hm1 = i >= 1 ? p.heights[i - 1] : h0
+            let hp1 = i + 2 < n ? p.heights[i + 2] : h1
+            let hp2 = i + 3 < n ? p.heights[i + 3] : h1
+            let sm0 = (hm2 + 4 * hm1 + 6 * h0 + 4 * h1 + hp1) / 16
+            let sm1 = (hm1 + 4 * h0 + 6 * h1 + 4 * hp1 + hp2) / 16
+
+            // Taper the top and bottom of the wall.
+            let edgeCols = min(4, Float(n) * 0.2)
+            let dEdge = Float(min(i, n - 2 - i))
+            var fade: Float = 1
+            if dEdge < edgeCols {
+                let t = max(0, dEdge / edgeCols)
+                fade = t * t * (3 - 2 * t)
+            }
+
+            let r0 = i < p.rough.count ? p.rough[i] : 1
+            let r1 = i + 1 < p.rough.count ? p.rough[i + 1] : 1
+            let s0 = sm0 * scale * fade * r0
+            let s1 = sm1 * scale * fade * r1
+
+            let y0 = p.edgeY + Float(i) * cell
+            let y1 = y0 + cell
+            let baseX = p.x0
+            let x0 = baseX + p.verticalSide * s0
+            let x1 = baseX + p.verticalSide * s1
+            let alpha = min(1.0, max(s0, s1) * 1.6)
+
+            out.append(DriftVertex(pos: SIMD2<Float>(baseX, y0), par: 0.0, alpha: alpha))
+            out.append(DriftVertex(pos: SIMD2<Float>(x0, y0),    par: 1.0, alpha: alpha))
+            out.append(DriftVertex(pos: SIMD2<Float>(x1, y1),    par: 1.0, alpha: alpha))
+
+            out.append(DriftVertex(pos: SIMD2<Float>(baseX, y0), par: 0.0, alpha: alpha))
+            out.append(DriftVertex(pos: SIMD2<Float>(x1, y1),    par: 1.0, alpha: alpha))
+            out.append(DriftVertex(pos: SIMD2<Float>(baseX, y1), par: 0.0, alpha: alpha))
+
+            if min(s0, s1) > 0.45 {
+                let inset = p.verticalSide * 1.0
+                out.append(DriftVertex(pos: SIMD2<Float>(x0, y0), par: 1.12, alpha: alpha))
+                out.append(DriftVertex(pos: SIMD2<Float>(x0 + inset, y0), par: 1.25, alpha: alpha * 0.9))
+                out.append(DriftVertex(pos: SIMD2<Float>(x1 + inset, y1), par: 1.25, alpha: alpha * 0.9))
+
+                out.append(DriftVertex(pos: SIMD2<Float>(x0, y0), par: 1.12, alpha: alpha))
+                out.append(DriftVertex(pos: SIMD2<Float>(x1 + inset, y1), par: 1.25, alpha: alpha * 0.9))
+                out.append(DriftVertex(pos: SIMD2<Float>(x1, y1), par: 1.12, alpha: alpha))
             }
         }
     }

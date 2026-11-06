@@ -49,6 +49,15 @@ final class WindowTracker {
             kCGNullWindowID
         ) as? [[String: Any]] else { return }
 
+        // A Space transition moves every window at once. Do not let that read
+        // as a shake or a real drag velocity.
+        if SpaceMonitor.shared.isSpaceTransitioning {
+            for w in cache.values {
+                w.velocity = .zero
+                w.history.removeAll()
+            }
+        }
+
         let myPID = ProcessInfo.processInfo.processIdentifier
         var seen: [CGWindowID: Int] = [:]
         var ordered: [TrackedWindow] = []
@@ -124,6 +133,15 @@ final class WindowTracker {
     /// A shake is a rapid left-right reversal of the window origin.
     /// Fast dragging has speed but no reversals, so it won't trigger.
     private func detectShake(_ w: TrackedWindow, now: CFTimeInterval) {
+        // Resizing, minimising or a Space swipe changes the window size. That
+        // is not a shake, and feeding it to the detector produces wild motion.
+        let dw = abs(w.bounds.width - w.previousBounds.width)
+        let dh = abs(w.bounds.height - w.previousBounds.height)
+        if dw > 2 || dh > 2 {
+            w.history.removeAll()
+            return
+        }
+
         w.history.append((now, w.bounds.minX, w.bounds.minY))
         w.history.removeAll { now - $0.t > 0.45 }
 
