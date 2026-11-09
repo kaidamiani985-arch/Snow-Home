@@ -1054,8 +1054,8 @@ final class SnowEngine {
 
                 // Part of the bite is thrown forward as grains; the rest is
                 // shoved into the next column so the pile actually moves.
-                let detach = min(h, 0.22 * w)
-                let shove = min(max(0, h - detach), 1.35 * w)
+                let detach = min(h, 0.34 * w)
+                let shove = min(max(0, h - detach), 1.50 * w)
                 let j = i + (dir > 0 ? 1 : -1)
 
                 if j >= 0 && j < n {
