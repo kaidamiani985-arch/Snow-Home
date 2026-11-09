@@ -670,13 +670,20 @@ final class SnowEngine {
             // added to or removed from the Dock. Fall back to the estimate
             // when Accessibility is unavailable.
             let inset: Float = 2
-            let dw: Float
-            let dx0: Float
-            if let ax = DockAX.pillFrame() {
+            let axFrame: (x: Float, width: Float)? = {
+                guard let ax = DockAX.pillFrame() else { return nil }
                 let local = space.toLocal(CGRect(x: ax.x, y: 0,
                                                  width: ax.width, height: ax.height))
-                dx0 = Float(local.minX) + inset
-                dw = Float(local.width) - inset * 2
+                guard local.minX > -40,
+                      local.maxX < CGFloat(width) + 40 else { return nil }
+                return (Float(local.minX) + inset,
+                        Float(local.width) - inset * 2)
+            }()
+            let dw: Float
+            let dx0: Float
+            if let axFrame {
+                dx0 = axFrame.x
+                dw = axFrame.width
             } else {
                 dx0 = Float(dock.x0) + 12
                 dw = Float(dock.width) - 24
