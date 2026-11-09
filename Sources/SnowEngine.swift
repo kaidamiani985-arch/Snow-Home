@@ -33,6 +33,9 @@ final class Platform {
     /// How tall this surface is allowed to pile. The Dock's limit grows over
     /// time so a long session builds a proper snow bank.
     var maxHeight: Float = Platform.defaultMaxHeight
+    /// Optional per-column cap. The ground uses this to grow taller snow
+    /// mounds in the bottom corners.
+    var maxHeightProfile: [Float]? = nil
 
     let id: CGWindowID?
     var layer: SnowLayer
@@ -144,7 +147,8 @@ final class Platform {
         for k in 0..<9 {
             let j = idx + k - 4
             guard j >= 0 && j < heights.count else { continue }
-            heights[j] = min(heights[j] + amount * kernel[k], maxHeight)
+            let cap = maxHeightProfile?[j] ?? maxHeight
+            heights[j] = min(heights[j] + amount * kernel[k], cap)
         }
     }
 
@@ -257,6 +261,20 @@ final class SnowEngine {
         self.density = density
         self.ground = Platform(id: nil, layer: .back, x0: 0, edgeY: Float(space.size.height),
                                width: Float(space.size.width), zIndex: 9999, isDock: false)
+        // Let the bottom corners grow into proper mounds so snow fills the gap
+        // between the Dock and the screen edge. The middle of the ground stays
+        // at the normal, shallow height.
+        let groundCols = ground.heights.count
+        var caps = [Float](repeating: Platform.defaultMaxHeight, count: groundCols)
+        let cornerWidth: Float = 130
+        for i in 0..<groundCols {
+            let x = (Float(i) + 0.5) * Platform.cell
+            let d = min(x, width - x)
+            let t = max(0, 1 - d / cornerWidth)
+            let smooth = t * t * (3 - 2 * t)
+            caps[i] = Platform.defaultMaxHeight + 58 * smooth
+        }
+        ground.maxHeightProfile = caps
         var grainPool = [Flake](repeating: Flake(), count: 2400)
         for i in grainPool.indices { grainPool[i].enabled = false }
         self.grains = grainPool
@@ -1139,6 +1157,9 @@ final class SnowEngine {
 
     private func updateSurface(_ p: Platform, dt: Float, now: CFTimeInterval) {
         relax(p)
+        // The ground is the catch-all surface; it should keep its snow instead
+        // of spilling it off the screen edge.
+        guard p.id != nil else { return }
         shedEdges(p, dt: dt, now: now)
         shedEdgeFlakes(p, now: now)
     }
@@ -1301,8 +1322,12 @@ final class SnowEngine {
         }
 
         for i in 0..<n {
-            if p.heights[i] < 0.02 { p.heights[i] = 0 }
-            else if p.heights[i] > p.maxHeight { p.heights[i] = p.maxHeight }
+            if p.heights[i] < 0.02 {
+                p.heights[i] = 0
+            } else {
+                let cap = p.maxHeightProfile?[i] ?? p.maxHeight
+                if p.heights[i] > cap { p.heights[i] = cap }
+            }
         }
     }
 
