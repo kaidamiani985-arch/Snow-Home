@@ -2,7 +2,7 @@
 
 **A little snowfall for your desktop.** Snow settles on window tops, the Dock, and desktop icons. Push it around with your cursor, shake a window to knock it loose, and watch it pile up.
 
-[**Download for macOS →**](../../releases) &nbsp;·&nbsp; [How it works](docs/TECHNICAL.md) &nbsp;·&nbsp; [Build from source](#build-from-source)
+[**Download for macOS →**](../../releases/latest) &nbsp;·&nbsp; [How it works](docs/TECHNICAL.md) &nbsp;·&nbsp; [Build from source](#build-from-source)
 
 ![Snow on Mac](docs/screenshot.png)
 
@@ -53,7 +53,7 @@ cd Snow-Home
 
 ## Status
 
-Early preview. The core snowfall is working; I'm still polishing a few things. Feedback and ideas are welcome.
+First public release — 1.0. Snow is working, the installer is ready, and feedback is very welcome.
 
 ## Credits
 

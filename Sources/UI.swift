@@ -70,7 +70,7 @@ struct SnowMenuView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text("0.1.0")
+            Text(appVersion)
                 .font(.system(size: 9.5))
                 .foregroundStyle(.tertiary)
         }
@@ -149,6 +149,10 @@ struct SnowMenuView: View {
         .buttonStyle(.plain)
     }
 
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+
     private var appIcon: NSImage {
         NSApp.applicationIconImage
             ?? NSImage(systemSymbolName: "snowflake", accessibilityDescription: nil)
@@ -160,6 +164,7 @@ struct SnowMenuView: View {
 
 struct SetupView: View {
     @ObservedObject var model: SnowMenuModel
+    @State private var appeared = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -228,7 +233,14 @@ struct SetupView: View {
         }
         .padding(22)
         .frame(width: 500, height: 390)
-        .onAppear { model.refreshAccessibility() }
+        .opacity(appeared ? 1 : 0)
+        .scaleEffect(appeared ? 1 : 0.985)
+        .onAppear {
+            model.refreshAccessibility()
+            withAnimation(.easeOut(duration: 0.45)) {
+                appeared = true
+            }
+        }
     }
 
     private var header: some View {
