@@ -1006,7 +1006,7 @@ final class SnowEngine {
         let dir: Float = dx > 0 ? 1 : -1
         let speed = min(abs(vx), 700)
         let down = ScreenGeometry.isMouseDown
-        let radius: Float = down ? 28 : 18
+        let radius: Float = down ? 30 : 20
 
         for p in allPlatforms() {
             guard !p.isVertical, !p.hidden else { continue }
@@ -1037,13 +1037,13 @@ final class SnowEngine {
 
                 // Part of the bite is thrown forward as grains; the rest is
                 // shoved into the next column so the pile actually moves.
-                let detach = min(h, 0.28 * w)
-                let shove = min(max(0, h - detach), 0.95 * w)
+                let detach = min(h, 0.22 * w)
+                let shove = min(max(0, h - detach), 1.35 * w)
                 let j = i + (dir > 0 ? 1 : -1)
 
                 if j >= 0 && j < n {
                     if p.heights[j] < p.maxHeight &&
-                       (p.heights[j] < h + 1.2 || speed > 320) {
+                       (p.heights[j] < h + 2.0 || speed > 260) {
                         p.heights[i] -= detach + shove
                         p.heights[j] += shove
                     } else {

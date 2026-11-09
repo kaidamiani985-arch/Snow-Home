@@ -40,6 +40,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.showSetup()
             }
         }
+
+        if CommandLine.arguments.contains("--preview-menu") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.togglePopover()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

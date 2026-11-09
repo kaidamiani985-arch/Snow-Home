@@ -4,7 +4,7 @@
 
 [**Download for macOS →**](../../releases) &nbsp;·&nbsp; [How it works](docs/TECHNICAL.md) &nbsp;·&nbsp; [Build from source](#build-from-source)
 
-![Snow on Mac](docs/banner.png)
+![Snow on Mac](docs/screenshot.png)
 
 ## Install
 
