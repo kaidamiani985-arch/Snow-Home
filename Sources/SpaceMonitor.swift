@@ -23,7 +23,7 @@ final class SpaceMonitor {
     /// True briefly after the active Space changes. Used to suppress shedding
     /// while windows are sliding in and out during the transition.
     var isSpaceTransitioning: Bool {
-        CACurrentMediaTime() - lastSpaceChange < 0.7
+        CACurrentMediaTime() - lastSpaceChange < 0.35
     }
 
     private init() {

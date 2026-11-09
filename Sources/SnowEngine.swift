@@ -52,6 +52,8 @@ final class Platform {
     /// Screen-edge wall: the height profile runs vertically and grows inward.
     var isVertical: Bool = false
     var verticalSide: Float = 1   // +1 = left edge, -1 = right edge
+    /// Hidden while the Dock is away during a Space transition.
+    var hidden: Bool = false
     let noiseSeed: Float
     var zIndex: Int
     var isDock: Bool
@@ -493,6 +495,7 @@ final class SnowEngine {
 
         updateSurface(ground, dt: dt, now: now)
         for p in platforms.values {
+            if p.hidden { continue }
             if p.isVertical {
                 relax(p)
             } else {
@@ -535,7 +538,7 @@ final class SnowEngine {
         var bestSurface: Float = .greatestFiniteMagnitude
 
         for p in platforms.values where p.layer == layer {
-            if p.isVertical { continue }
+            if p.isVertical || p.hidden { continue }
             if let ignoring, p.id == ignoring { continue }
             guard x >= p.x0 && x <= p.x0 + p.width else { continue }
             let surface = surfaceY(p, x: x)
@@ -569,6 +572,8 @@ final class SnowEngine {
         var seen = Set<CGWindowID>()
         var skippedFullScreen = Set<CGWindowID>()
         var currentRects: [(rect: CGRect, z: Int)] = []
+        let dockHidden = NSApplication.shared.currentSystemPresentationOptions.contains(.hideDock)
+        let spaceChanging = SpaceMonitor.shared.isSpaceTransitioning
 
         for w in WindowTracker.shared.windows {
             let lr = space.toLocal(w.bounds)
@@ -675,9 +680,15 @@ final class SnowEngine {
                     // allowed to get. It keeps growing until it overflows off
                     // the ends.
                     p.maxHeight = min(90, 36 + time * 0.025)
+                    p.hidden = spaceChanging
                     setRoundedCornerProfile(p, radius: 20)
                 }
             }
+        } else if let p = platforms[dockID] {
+            // The Dock is hidden (full-screen transition or auto-hide). Keep
+            // its snow, but stop drawing it until the Dock comes back.
+            seen.insert(dockID)
+            p.hidden = true
         }
 
         // Desktop icons (requires Accessibility). Each icon's platform uses the
@@ -728,8 +739,6 @@ final class SnowEngine {
             iconIDs = iconIDs.filter { iconsSeen.contains($0.key) }
         }
 
-        let dockHidden = NSApplication.shared.currentSystemPresentationOptions.contains(.hideDock)
-        let spaceChanging = SpaceMonitor.shared.isSpaceTransitioning
         for (id, p) in platforms where !seen.contains(id) {
             if p.isDock || dockHidden || spaceChanging {
                 // The Dock is leaving with a Space transition; do not dump its
@@ -780,7 +789,7 @@ final class SnowEngine {
     private func updateOcclusion(rects: [(rect: CGRect, z: Int)]) {
         let cell = Platform.cell
         for p in platforms.values {
-            if p.isVertical { continue }
+            if p.isVertical || p.hidden { continue }
             let n = p.heights.count
             if p.occluded.count != n {
                 p.occluded = [Bool](repeating: false, count: n)
@@ -987,10 +996,10 @@ final class SnowEngine {
         let dir: Float = dx > 0 ? 1 : -1
         let speed = min(abs(vx), 700)
         let down = ScreenGeometry.isMouseDown
-        let radius: Float = down ? 24 : 15
+        let radius: Float = down ? 28 : 18
 
         for p in allPlatforms() {
-            guard !p.isVertical else { continue }
+            guard !p.isVertical, !p.hidden else { continue }
             guard cx > p.x0 - radius, cx < p.x0 + p.width + radius else { continue }
             let n = p.heights.count
             let i0 = max(0, Int((cx - radius - p.x0) / Platform.cell))
@@ -1018,8 +1027,8 @@ final class SnowEngine {
 
                 // Part of the bite is thrown forward as grains; the rest is
                 // shoved into the next column so the pile actually moves.
-                let detach = min(h, 0.20 * w)
-                let shove = min(max(0, h - detach), 0.70 * w)
+                let detach = min(h, 0.28 * w)
+                let shove = min(max(0, h - detach), 0.95 * w)
                 let j = i + (dir > 0 ? 1 : -1)
 
                 if j >= 0 && j < n {
@@ -1041,8 +1050,8 @@ final class SnowEngine {
                 guard falling > 0.02 else { continue }
                 spawnGrain(x: colX + Float.random(in: -1.5...1.5),
                            y: surface - Float.random(in: 0...1.5),
-                           vx: dir * Float.random(in: 30...80) + Float.random(in: -8...8),
-                           vy: Float.random(in: -28...4),
+                           vx: dir * Float.random(in: 40...95) + Float.random(in: -8...8),
+                           vy: Float.random(in: -32...6),
                            mass: falling,
                            near: p.layer == .front)
             }
@@ -1058,12 +1067,12 @@ final class SnowEngine {
 
         let cx = Float(cursor.x)
         let cy = Float(cursor.y)
-        let radius: Float = 46
+        let radius: Float = 52
         let invSpeed = 1 / max(1, speed)
         let dirX = cursorVX * invSpeed
         let dirY = cursorVY * invSpeed
         let strength = min(1, speed / 650)
-        let impulse = (55 + 130 * strength) * dt
+        let impulse = (65 + 150 * strength) * dt
 
         func disturb(_ x: Float, _ y: Float, _ vx: inout Float, _ vy: inout Float) {
             let dx = x - cx
@@ -1304,7 +1313,9 @@ final class SnowEngine {
 
         buildDrift(ground, into: &backDrift)
         for p in platforms.values {
-            if p.isVertical {
+            if p.hidden {
+                continue
+            } else if p.isVertical {
                 buildVerticalDrift(p, into: &backDrift)
             } else if p.layer == .front {
                 buildDrift(p, into: &frontDrift)

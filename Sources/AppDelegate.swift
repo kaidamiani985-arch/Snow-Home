@@ -1,13 +1,21 @@
 import AppKit
+import ApplicationServices
+import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controllers: [ScreenController] = []
     private var statusItem: NSStatusItem?
+    private var popover: NSPopover?
+    private var menuModel: SnowMenuModel?
+    private var setupWindowController: SetupWindowController?
+
     private var enabled = true
-    private var density: SnowDensity = .normal
+    private var density: SnowDensity = .light
 
     private let densityKey = "snow.density"
     private let enabledKey = "snow.enabled"
+    private let setupKey = "snow.setupComplete"
+    private let lightMigrationKey = "snow.defaultLight.v1"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadSettings()
@@ -20,6 +28,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appBecameActive),
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+
+        if !UserDefaults.standard.bool(forKey: setupKey) {
+            DispatchQueue.main.async { [weak self] in
+                self?.showSetup()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -33,7 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if defaults.object(forKey: enabledKey) != nil {
             enabled = defaults.bool(forKey: enabledKey)
         }
-        if let raw = SnowDensity(rawValue: defaults.integer(forKey: densityKey)) {
+
+        // New installs (and existing installs updating to this build) start on
+        // the quiet Light setting. After that the user's choice is remembered.
+        if defaults.object(forKey: lightMigrationKey) == nil {
+            density = .light
+            defaults.set(true, forKey: lightMigrationKey)
+            defaults.set(density.rawValue, forKey: densityKey)
+        } else if defaults.object(forKey: densityKey) != nil,
+                  let raw = SnowDensity(rawValue: defaults.integer(forKey: densityKey)) {
             density = raw
         }
     }
@@ -64,72 +92,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func appBecameActive() {
+        menuModel?.refreshAccessibility()
+    }
+
     // MARK: - Menu bar
 
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            let image = NSImage(systemSymbolName: "snowflake", accessibilityDescription: "Snow")
+            let image = NSImage(systemSymbolName: "snowflake", accessibilityDescription: "Snow on Mac")
             image?.isTemplate = true
             button.image = image
             button.toolTip = "Snow on Mac"
+            button.target = self
+            button.action = #selector(togglePopover)
+            button.sendAction(on: [.leftMouseUp])
+            button.appearsDisabled = !enabled
         }
 
-        let menu = NSMenu()
+        let model = SnowMenuModel(enabled: enabled,
+                                  density: density,
+                                  axEnabled: AXIsProcessTrusted())
+        model.delegate = self
+        menuModel = model
 
-        let toggle = NSMenuItem(title: "Snowfall", action: #selector(toggleSnow), keyEquivalent: "")
-        toggle.target = self
-        toggle.state = enabled ? .on : .off
-        menu.addItem(toggle)
+        let popover = NSPopover()
+        popover.contentViewController = NSHostingController(rootView: SnowMenuView(model: model))
+        popover.behavior = .transient
+        popover.animates = true
+        popover.contentSize = NSSize(width: 286, height: 320)
+        self.popover = popover
 
-        let densityItem = NSMenuItem(title: "Density", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        for d in SnowDensity.allCases {
-            let mi = NSMenuItem(title: d.label, action: #selector(setDensity(_:)), keyEquivalent: "")
-            mi.target = self
-            mi.tag = d.rawValue
-            mi.state = (d == density) ? .on : .off
-            submenu.addItem(mi)
-        }
-        densityItem.submenu = submenu
-        menu.addItem(densityItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let clear = NSMenuItem(title: "Clear Snow", action: #selector(clearSnow), keyEquivalent: "")
-        clear.target = self
-        menu.addItem(clear)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let quit = NSMenuItem(title: "Quit Snow", action: #selector(quit), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-
-        item.menu = menu
         statusItem = item
     }
 
-    private func refreshMenuStates() {
-        guard let menu = statusItem?.menu else { return }
-        for item in menu.items {
-            if item.action == #selector(toggleSnow) {
-                item.state = enabled ? .on : .off
-            }
-            if let sub = item.submenu, item.title == "Density" {
-                for mi in sub.items {
-                    mi.state = (mi.tag == density.rawValue) ? .on : .off
-                }
+    @objc private func togglePopover() {
+        guard let button = statusItem?.button, let popover else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    // MARK: - Setup window
+
+    func showSetup() {
+        if setupWindowController == nil {
+            guard let model = menuModel else { return }
+            setupWindowController = SetupWindowController(model: model) { [weak self] in
+                self?.setupDidClose()
             }
         }
+        setupWindowController?.showWindow(nil)
+        setupWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func finishSetup() {
+        UserDefaults.standard.set(true, forKey: setupKey)
+        ensureSnowEnabled()
+        setupWindowController?.close()
+    }
+
+    func closeSetup() {
+        finishSetup()
+    }
+
+    private func setupDidClose() {
+        UserDefaults.standard.set(true, forKey: setupKey)
+        ensureSnowEnabled()
+    }
+
+    private func ensureSnowEnabled() {
+        guard !enabled else { return }
+        enabled = true
+        setVisible(true)
+        saveSettings()
+        menuModel?.enabled = enabled
+        statusItem?.button?.appearsDisabled = false
     }
 
     // MARK: - Actions
 
-    @objc private func toggleSnow() {
+    @objc func toggleSnow() {
         enabled.toggle()
         setVisible(enabled)
-        refreshMenuStates()
+        refreshState()
         saveSettings()
     }
 
@@ -139,19 +191,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func setDensity(_ sender: NSMenuItem) {
-        guard let d = SnowDensity(rawValue: sender.tag) else { return }
+    func applyDensity(_ d: SnowDensity) {
         density = d
         controllers.forEach { $0.setDensity(d) }
-        refreshMenuStates()
         saveSettings()
+        menuModel?.density = d
     }
 
-    @objc private func clearSnow() {
+    @objc private func setDensity(_ sender: NSMenuItem) {
+        guard let d = SnowDensity(rawValue: sender.tag) else { return }
+        applyDensity(d)
+    }
+
+    @objc func clearSnow() {
         controllers.forEach { $0.clearSnow() }
     }
 
-    @objc private func quit() {
+    @objc func quit() {
         NSApp.terminate(nil)
+    }
+
+    func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func refreshState() {
+        menuModel?.enabled = enabled
+        statusItem?.button?.appearsDisabled = !enabled
     }
 }

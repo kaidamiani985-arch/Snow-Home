@@ -12,6 +12,8 @@ cd "$(dirname "$0")"
 
 APP_NAME="Snow On Mac"
 BUNDLE="$APP_NAME.app"
+MIN_MACOS="12.0"
+ARCHS=("arm64" "x86_64")
 
 SDK="${SNOW_SDK:-/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk}"
 if [ ! -d "$SDK" ]; then
@@ -23,17 +25,28 @@ if [ ! -d "$SDK" ]; then
 fi
 
 echo "SDK: $SDK"
+echo "Target: macOS $MIN_MACOS (${ARCHS[*]})"
 
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 
-swiftc \
-  -O \
-  -wmo \
-  -sdk "$SDK" \
-  -target arm64-apple-macosx14.0 \
-  Sources/*.swift \
-  -o "$BUNDLE/Contents/MacOS/SnowOnMac"
+BUILD_DIR="$(mktemp -d)"
+trap 'rm -rf "$BUILD_DIR"' EXIT
+BINARIES=()
+
+for ARCH in "${ARCHS[@]}"; do
+  echo "Building $ARCH..."
+  swiftc \
+    -O \
+    -wmo \
+    -sdk "$SDK" \
+    -target "${ARCH}-apple-macosx${MIN_MACOS}" \
+    Sources/*.swift \
+    -o "$BUILD_DIR/SnowOnMac-$ARCH"
+  BINARIES+=("$BUILD_DIR/SnowOnMac-$ARCH")
+done
+
+lipo -create "${BINARIES[@]}" -output "$BUNDLE/Contents/MacOS/SnowOnMac"
 
 cp Resources/Info.plist "$BUNDLE/Contents/Info.plist"
 if [ -f Resources/Snow.icns ]; then
@@ -56,3 +69,4 @@ else
 fi
 
 echo "Built $BUNDLE"
+lipo -info "$BUNDLE/Contents/MacOS/SnowOnMac"

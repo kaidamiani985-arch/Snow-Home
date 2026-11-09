@@ -86,7 +86,8 @@ not required.
 - The app is not notarised, so the first launch may need
   **System Settings → Privacy & Security → "Open Anyway"** or right-click the
   app → Open.
-- The release build targets Apple Silicon (`arm64`) and macOS 14+.
+- `build.sh` produces a universal binary for Apple Silicon (`arm64`) and
+  Intel (`x86_64`), with a minimum deployment target of macOS 12 Monterey.
 
 ## Layout
 
@@ -100,9 +101,11 @@ Sources/
   Shaders.swift        shader source, compiled at runtime
   OverlayWindow.swift  the two overlay windows
   ScreenController.swift  one engine + two windows per display
-  AppDelegate.swift    menu bar item + settings
+  AppDelegate.swift    app lifecycle, menu bar item, settings
+  UI.swift             SwiftUI menu popover + first-run welcome window
   main.swift
 Resources/Info.plist
+docs/dmg-background.png  installer background
 Tools/makeicon.swift   generates the app icon
 ```
 
