@@ -666,11 +666,21 @@ final class SnowEngine {
         // snow sits on top of the pill instead of behind it.
         let dockID = dockPlatformID
         if let dock = DockGeometry.strip(for: space) {
-            // The pill estimate is a little wider than the visible Dock.
-            // Pull the cap in to the real rounded edge, then follow the curve.
-            let inset: Float = 12
-            let dw = Float(dock.width) - inset * 2
-            let dx0 = Float(dock.x0) + inset
+            // Prefer the real Accessibility frame: it changes when apps are
+            // added to or removed from the Dock. Fall back to the estimate
+            // when Accessibility is unavailable.
+            let inset: Float = 2
+            let dw: Float
+            let dx0: Float
+            if let ax = DockAX.pillFrame() {
+                let local = space.toLocal(CGRect(x: ax.x, y: 0,
+                                                 width: ax.width, height: ax.height))
+                dx0 = Float(local.minX) + inset
+                dw = Float(local.width) - inset * 2
+            } else {
+                dx0 = Float(dock.x0) + 12
+                dw = Float(dock.width) - 24
+            }
             let dEdge = Float(dock.edgeY)
             if dw > 40 {
                 seen.insert(dockID)
