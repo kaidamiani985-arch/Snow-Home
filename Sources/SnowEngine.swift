@@ -1072,13 +1072,13 @@ final class SnowEngine {
 
                 // Part of the bite is thrown forward as grains; the rest is
                 // shoved into the next column so the pile actually moves.
-                let detach = min(h, 0.34 * w)
-                let shove = min(max(0, h - detach), 1.50 * w)
+                let detach = min(h, 0.42 * w)
+                let shove = min(max(0, h - detach), 1.90 * w)
                 let j = i + (dir > 0 ? 1 : -1)
 
                 if j >= 0 && j < n {
                     if p.heights[j] < p.maxHeight &&
-                       (p.heights[j] < h + 2.0 || speed > 260) {
+                       (p.heights[j] < h + 2.5 || speed > 220) {
                         p.heights[i] -= detach + shove
                         p.heights[j] += shove
                     } else {
@@ -1095,8 +1095,8 @@ final class SnowEngine {
                 guard falling > 0.02 else { continue }
                 spawnGrain(x: colX + Float.random(in: -1.5...1.5),
                            y: surface - Float.random(in: 0...1.5),
-                           vx: dir * Float.random(in: 40...95) + Float.random(in: -8...8),
-                           vy: Float.random(in: -32...6),
+                           vx: dir * Float.random(in: 45...105) + Float.random(in: -8...8),
+                           vy: Float.random(in: -38...8),
                            mass: falling,
                            near: p.layer == .front)
             }
@@ -1112,12 +1112,12 @@ final class SnowEngine {
 
         let cx = Float(cursor.x)
         let cy = Float(cursor.y)
-        let radius: Float = 52
+        let radius: Float = 72
         let invSpeed = 1 / max(1, speed)
         let dirX = cursorVX * invSpeed
         let dirY = cursorVY * invSpeed
         let strength = min(1, speed / 650)
-        let impulse = (65 + 150 * strength) * dt
+        let impulse = (90 + 200 * strength) * dt
 
         func disturb(_ x: Float, _ y: Float, _ vx: inout Float, _ vy: inout Float) {
             let dx = x - cx
@@ -1128,9 +1128,9 @@ final class SnowEngine {
             let falloff = 1 - d / radius
             let nx = dx / d
             let ny = dy / d
-            vx += (nx * 0.45 + dirX * 0.90) * impulse * falloff * 6
-            vy += (ny * 0.25 + dirY * 0.25) * impulse * falloff * 3
-            vy -= 14 * falloff * dt * 4
+            vx += (nx * 0.55 + dirX * 1.10) * impulse * falloff * 6
+            vy += (ny * 0.30 + dirY * 0.30) * impulse * falloff * 3
+            vy -= 18 * falloff * dt * 4
         }
 
         for i in flakes.indices {
