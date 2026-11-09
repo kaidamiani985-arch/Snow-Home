@@ -121,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(rootView: SnowMenuView(model: model))
         popover.behavior = .transient
         popover.animates = true
-        popover.contentSize = NSSize(width: 286, height: 320)
+        popover.contentSize = NSSize(width: 286, height: 350)
         self.popover = popover
 
         statusItem = item
@@ -209,6 +209,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func quit() {
         NSApp.terminate(nil)
+    }
+
+    func showAbout() {
+        NSApp.orderFrontStandardAboutPanel(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     func openAccessibilitySettings() {

@@ -375,6 +375,16 @@ final class SnowEngine {
         }
 
         WindowTracker.shared.refreshIfNeeded(now: now)
+        if WindowTracker.shared.isMissionControl {
+            // Mission Control / Exposé shows a frozen window layer. The snow
+            // should not be part of that snapshot.
+            backFlakes.removeAll(keepingCapacity: true)
+            frontFlakes.removeAll(keepingCapacity: true)
+            backDrift.removeAll(keepingCapacity: true)
+            frontDrift.removeAll(keepingCapacity: true)
+            hasLastCursor = false
+            return
+        }
         syncPlatforms(now: now)
 
 

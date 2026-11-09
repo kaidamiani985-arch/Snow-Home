@@ -30,6 +30,8 @@ final class WindowTracker {
     static let shared = WindowTracker()
 
     private(set) var windows: [TrackedWindow] = []
+    /// True while Mission Control / Exposé is showing its window layer.
+    private(set) var isMissionControl = false
 
     private let pollInterval: CFTimeInterval = 1.0 / 60.0
     private var lastPoll: CFTimeInterval = 0
@@ -48,6 +50,8 @@ final class WindowTracker {
             [.optionOnScreenOnly, .excludeDesktopElements],
             kCGNullWindowID
         ) as? [[String: Any]] else { return }
+
+        isMissionControl = false
 
         // A Space transition moves every window at once. Do not let that read
         // as a shake or a real drag velocity.
@@ -78,13 +82,20 @@ final class WindowTracker {
 
             let layer = (info[kLayer] as? NSNumber)?.intValue ?? 0
             let alpha = (info[kAlpha] as? NSNumber)?.doubleValue ?? 1
-            if alpha < 0.02 { continue }
 
             guard let bdict = info[kBounds] as? NSDictionary,
                   let rect = CGRect(dictionaryRepresentation: bdict) else { continue }
-            if rect.width < 40 || rect.height < 20 { continue }
 
             let owner = info[kOwner] as? String ?? ""
+            // Mission Control adds a Dock-owned window just above the top of
+            // the screen. It is the reliable signal that the window layer is
+            // active, so the snow overlay can hide itself.
+            if owner == "Dock" && rect.minY <= -0.5 {
+                isMissionControl = true
+            }
+
+            if alpha < 0.02 { continue }
+            if rect.width < 40 || rect.height < 20 { continue }
             let isDock = (owner == "Dock")
                 && layer == 20
                 && rect.height >= 20 && rect.height < 400

@@ -31,6 +31,7 @@ final class SnowMenuModel: ObservableObject {
     func quit() { delegate?.quit() }
     func openSetup() { delegate?.showSetup() }
     func openAccessibility() { delegate?.openAccessibilitySettings() }
+    func showAbout() { delegate?.showAbout() }
     func refreshAccessibility() { axEnabled = AXIsProcessTrusted() }
     func finishSetup() { delegate?.finishSetup() }
     func closeSetup() { delegate?.closeSetup() }
@@ -115,6 +116,7 @@ struct SnowMenuView: View {
             menuButton("Clear Snow", icon: "wind") { model.clear() }
             menuButton("Welcome to Snow…", icon: "sparkles") { model.openSetup() }
             menuButton("Accessibility Settings…", icon: "hand.raised") { model.openAccessibility() }
+            menuButton("About Snow on Mac", icon: "info.circle") { model.showAbout() }
         }
     }
 
