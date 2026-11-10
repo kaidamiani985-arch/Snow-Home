@@ -96,11 +96,6 @@ final class IconTracker {
             lastPreviewCheck = now
             loadPreviewSetting()
         }
-        guard !desktopFiles.isEmpty else {
-            clearAfterRepeatedEmptyResults()
-            return
-        }
-
         let app = AXUIElementCreateApplication(finderPID)
         var candidates: [String: DesktopIcon] = [:]
 
@@ -210,16 +205,17 @@ final class IconTracker {
     }
 
     private func walk(_ e: AXUIElement, depth: Int, into out: inout [String: DesktopIcon]) {
-        if depth > 7 { return }
+        if depth > 10 { return }
 
         let title = attr(e, kAXTitleAttribute) as? String ?? ""
-        if !title.isEmpty, let info = desktopFiles[title] ?? fuzzyMatch(title) {
+        if !title.isEmpty {
             let rect = frame(of: e)
             let plausible = rect.width >= 16 && rect.height >= 16
                 && rect.width <= 320 && rect.height <= 320
                 && rect.minX > -30000 && rect.minY > -30000
 
-            if plausible, let sheet = sheet(for: info, pointSize: rect.width) {
+            if let info = fileInfo(for: e, title: title),
+               plausible, let sheet = sheet(for: info, pointSize: rect.width) {
                 let icon = DesktopIcon(
                     id: info.name,
                     title: title,
@@ -237,14 +233,79 @@ final class IconTracker {
                 } else {
                     out[info.name] = icon
                 }
+            } else if plausible, role(of: e) == "AXImage" {
+                // Finder can expose an icon/stack without a resolvable file
+                // path (stacks, aliases, restricted Desktop access). Fall back
+                // to a shallow flat cap so the snow still gathers on it.
+                let cells = max(2, Int((rect.width / IconTracker.cellPoints).rounded()))
+                let profile = [Float](repeating: 6, count: cells)
+                let icon = DesktopIcon(
+                    id: "ax:" + title,
+                    title: title,
+                    rect: rect,
+                    profile: profile,
+                    xOffset: 0,
+                    isFolder: false
+                )
+                if let existing = out[icon.id] {
+                    if rect.height < existing.rect.height {
+                        out[icon.id] = icon
+                    }
+                } else {
+                    out[icon.id] = icon
+                }
             }
         }
 
-        if depth < 7, let children = attr(e, kAXChildrenAttribute) as? [AXUIElement] {
+        if depth < 10, let children = attr(e, kAXChildrenAttribute) as? [AXUIElement] {
             for c in children.prefix(400) {
                 walk(c, depth: depth + 1, into: &out)
             }
         }
+    }
+
+    /// Resolve the real file behind a Finder desktop AX element. Finder exposes
+    /// an AXURL (sometimes a file-reference URL) and AXFilename, so icon snow
+    /// still works when the Desktop folder itself is not readable by the app.
+    private func fileInfo(for element: AXUIElement, title: String) -> FileInfo? {
+        if let url = axFileURL(of: element) {
+            let path = url.path
+            if FileManager.default.fileExists(atPath: path) {
+                return makeFileInfo(url: url)
+            }
+        }
+        if let filename = attr(element, "AXFilename") as? String, !filename.isEmpty {
+            let path = NSHomeDirectory() + "/Desktop/" + filename
+            if FileManager.default.fileExists(atPath: path) {
+                return makeFileInfo(url: URL(fileURLWithPath: path))
+            }
+        }
+        return desktopFiles[title] ?? fuzzyMatch(title)
+    }
+
+    private func axFileURL(of element: AXUIElement) -> URL? {
+        guard let value = attr(element, "AXURL"),
+              CFGetTypeID(value) == CFURLGetTypeID() else { return nil }
+        let cfURL = value as! CFURL
+        if let pathURL = CFURLCreateFilePathURL(kCFAllocatorDefault, cfURL, nil) {
+            return pathURL.takeRetainedValue() as URL
+        }
+        return nil
+    }
+
+    private func makeFileInfo(url: URL) -> FileInfo {
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey, .isPackageKey, .contentModificationDateKey, .fileSizeKey
+        ]
+        let values = try? url.resourceValues(forKeys: keys)
+        return FileInfo(
+            path: url.path,
+            name: url.lastPathComponent,
+            displayName: url.deletingPathExtension().lastPathComponent,
+            isFolder: (values?.isDirectory ?? false) && !(values?.isPackage ?? false),
+            modified: values?.contentModificationDate ?? .distantPast,
+            size: Int64(values?.fileSize ?? 0)
+        )
     }
 
     /// Finder sometimes elides long names. Match the visible part.

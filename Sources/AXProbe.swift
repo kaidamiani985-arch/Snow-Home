@@ -40,6 +40,8 @@ enum AXProbe {
         let role = attr(e, kAXRoleAttribute) as? String ?? "?"
         let sub = attr(e, kAXSubroleAttribute) as? String ?? ""
         let title = attr(e, kAXTitleAttribute) as? String ?? ""
+        let url = attr(e, "AXURL")
+        let filename = attr(e, "AXFilename") as? String ?? ""
 
         var pos = CGPoint.zero
         var size = CGSize.zero
@@ -51,7 +53,7 @@ enum AXProbe {
         }
 
         let pad = String(repeating: "  ", count: depth)
-        emit("\(pad)\(role)/\(sub) '\(title)' pos=(\(Int(pos.x)),\(Int(pos.y))) size=(\(Int(size.width))x\(Int(size.height)))")
+        emit("\(pad)\(role)/\(sub) '\(title)' pos=(\(Int(pos.x)),\(Int(pos.y))) size=(\(Int(size.width))x\(Int(size.height))) url=\(url.map { String(describing: $0) } ?? "") file=\(filename)")
 
         guard depth < maxDepth else { return }
         if let children = attr(e, kAXChildrenAttribute) as? [AXUIElement] {

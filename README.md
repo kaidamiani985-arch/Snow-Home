@@ -53,7 +53,7 @@ cd Snow-Home
 
 ## Status
 
-First public release — 1.0. Snow is working, the installer is ready, and feedback is very welcome.
+First public release — 1.0.1. Snow is working, the installer is ready, and feedback is very welcome.
 
 ## Credits
 
