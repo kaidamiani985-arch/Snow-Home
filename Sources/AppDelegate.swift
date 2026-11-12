@@ -10,17 +10,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var setupWindowController: SetupWindowController?
 
     private var enabled = true
-    private var density: SnowDensity = .light
+    private var season: Season = .snow
+    private var snowDensity: SnowDensity = .light
+    private var autumnDensity: SnowDensity = .normal
+    private var autumnNeverDisappear = false
+    private var autumnTiltGravity = false
 
-    private let densityKey = "snow.density"
+    private let snowDensityKey = "snow.density"
+    private let autumnDensityKey = "autumn.density"
+    private let autumnNeverDisappearKey = "autumn.neverDisappear"
+    private let autumnTiltGravityKey = "autumn.tiltGravity"
+    private let seasonKey = "season.current"
     private let enabledKey = "snow.enabled"
     private let setupKey = "snow.setupComplete"
     private let lightMigrationKey = "snow.defaultLight.v1"
+
+    private var activeDensity: SnowDensity {
+        season == .snow ? snowDensity : autumnDensity
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         loadSettings()
         buildControllers()
         buildStatusItem()
+        updateTiltGravity()
 
         NotificationCenter.default.addObserver(
             self,
@@ -49,33 +62,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        TiltGravity.shared.stop()
         controllers.forEach { $0.close() }
     }
 
-    // MARK: - Setup
+    // MARK: - Settings
 
     private func loadSettings() {
         let defaults = UserDefaults.standard
         if defaults.object(forKey: enabledKey) != nil {
             enabled = defaults.bool(forKey: enabledKey)
         }
-
-        // New installs (and existing installs updating to this build) start on
-        // the quiet Light setting. After that the user's choice is remembered.
-        if defaults.object(forKey: lightMigrationKey) == nil {
-            density = .light
-            defaults.set(true, forKey: lightMigrationKey)
-            defaults.set(density.rawValue, forKey: densityKey)
-        } else if defaults.object(forKey: densityKey) != nil,
-                  let raw = SnowDensity(rawValue: defaults.integer(forKey: densityKey)) {
-            density = raw
+        if defaults.object(forKey: seasonKey) != nil,
+           let raw = Season(rawValue: defaults.integer(forKey: seasonKey)) {
+            season = raw
         }
+
+        if defaults.object(forKey: lightMigrationKey) == nil {
+            snowDensity = .light
+            defaults.set(true, forKey: lightMigrationKey)
+            defaults.set(snowDensity.rawValue, forKey: snowDensityKey)
+        } else if defaults.object(forKey: snowDensityKey) != nil,
+                  let raw = SnowDensity(rawValue: defaults.integer(forKey: snowDensityKey)) {
+            snowDensity = raw
+        }
+
+        if defaults.object(forKey: autumnDensityKey) != nil,
+           let raw = SnowDensity(rawValue: defaults.integer(forKey: autumnDensityKey)) {
+            autumnDensity = raw
+        }
+        autumnNeverDisappear = defaults.bool(forKey: autumnNeverDisappearKey)
+        autumnTiltGravity = defaults.bool(forKey: autumnTiltGravityKey)
     }
 
     private func saveSettings() {
         let defaults = UserDefaults.standard
         defaults.set(enabled, forKey: enabledKey)
-        defaults.set(density.rawValue, forKey: densityKey)
+        defaults.set(season.rawValue, forKey: seasonKey)
+        defaults.set(snowDensity.rawValue, forKey: snowDensityKey)
+        defaults.set(autumnDensity.rawValue, forKey: autumnDensityKey)
+        defaults.set(autumnNeverDisappear, forKey: autumnNeverDisappearKey)
+        defaults.set(autumnTiltGravity, forKey: autumnTiltGravityKey)
     }
 
     private func buildControllers() {
@@ -84,11 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let mainHeight = ScreenGeometry.mainHeight
         for screen in NSScreen.screens {
-            if let c = ScreenController(screen: screen, mainHeight: mainHeight, density: density) {
+            if let c = ScreenController(screen: screen, mainHeight: mainHeight,
+                                        season: season, density: activeDensity) {
+                c.setNeverDisappear(autumnNeverDisappear)
                 controllers.append(c)
             }
         }
-
         if !enabled { setVisible(false) }
     }
 
@@ -107,18 +135,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = item.button {
-            let image = NSImage(systemSymbolName: "snowflake", accessibilityDescription: "Snow on Mac")
-            image?.isTemplate = true
-            button.image = image
-            button.toolTip = "Snow on Mac"
             button.target = self
             button.action = #selector(togglePopover)
             button.sendAction(on: [.leftMouseUp])
+            button.toolTip = "Seasons on Mac"
             button.appearsDisabled = !enabled
         }
 
         let model = SnowMenuModel(enabled: enabled,
-                                  density: density,
+                                  season: season,
+                                  snowDensity: snowDensity,
+                                  autumnDensity: autumnDensity,
+                                  neverDisappear: autumnNeverDisappear,
+                                  tiltGravity: autumnTiltGravity,
+                                  tiltAvailable: TiltGravity.sensorAvailable(),
                                   axEnabled: AXIsProcessTrusted())
         model.delegate = self
         menuModel = model
@@ -127,10 +157,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(rootView: SnowMenuView(model: model))
         popover.behavior = .transient
         popover.animates = true
-        popover.contentSize = NSSize(width: 286, height: 350)
+        popover.contentSize = NSSize(width: 300, height: 510)
         self.popover = popover
 
         statusItem = item
+        updateStatusIcon()
+    }
+
+    private func updateStatusIcon() {
+        guard let button = statusItem?.button else { return }
+        let image = NSImage(systemSymbolName: season.symbol,
+                            accessibilityDescription: "Seasons on Mac")
+        image?.isTemplate = true
+        button.image = image
+        button.appearsDisabled = !enabled
     }
 
     @objc private func togglePopover() {
@@ -160,7 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func finishSetup() {
         UserDefaults.standard.set(true, forKey: setupKey)
-        ensureSnowEnabled()
+        ensureEnabled()
         setupWindowController?.close()
     }
 
@@ -170,16 +210,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupDidClose() {
         UserDefaults.standard.set(true, forKey: setupKey)
-        ensureSnowEnabled()
+        ensureEnabled()
     }
 
-    private func ensureSnowEnabled() {
+    private func ensureEnabled() {
         guard !enabled else { return }
         enabled = true
         setVisible(true)
         saveSettings()
         menuModel?.enabled = enabled
         statusItem?.button?.appearsDisabled = false
+        updateTiltGravity()
     }
 
     // MARK: - Actions
@@ -187,21 +228,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleSnow() {
         enabled.toggle()
         setVisible(enabled)
-        refreshState()
+        menuModel?.enabled = enabled
+        statusItem?.button?.appearsDisabled = !enabled
         saveSettings()
+        updateTiltGravity()
     }
 
     private func setVisible(_ visible: Bool) {
-        for c in controllers {
-            c.setVisible(visible)
-        }
+        for c in controllers { c.setVisible(visible) }
+    }
+
+    func switchSeason(_ newSeason: Season) {
+        guard newSeason != season else { return }
+        season = newSeason
+        saveSettings()
+        buildControllers()
+        updateStatusIcon()
+        menuModel?.season = newSeason
+        menuModel?.snowDensity = snowDensity
+        menuModel?.autumnDensity = autumnDensity
+        menuModel?.neverDisappear = autumnNeverDisappear
+        menuModel?.tiltGravity = autumnTiltGravity
+        updateTiltGravity()
+    }
+
+    func setNeverDisappear(_ value: Bool) {
+        autumnNeverDisappear = value
+        UserDefaults.standard.set(value, forKey: autumnNeverDisappearKey)
+        controllers.forEach { $0.setNeverDisappear(value) }
+        menuModel?.neverDisappear = value
+    }
+
+    func setTiltGravity(_ value: Bool) {
+        autumnTiltGravity = value
+        saveSettings()
+        menuModel?.tiltGravity = value
+        updateTiltGravity()
+    }
+
+    private func updateTiltGravity() {
+        let shouldRun = autumnTiltGravity && season == .autumn && enabled
+        TiltGravity.shared.setEnabled(shouldRun)
     }
 
     func applyDensity(_ d: SnowDensity) {
-        density = d
+        if season == .snow { snowDensity = d } else { autumnDensity = d }
         controllers.forEach { $0.setDensity(d) }
         saveSettings()
-        menuModel?.density = d
+        menuModel?.snowDensity = snowDensity
+        menuModel?.autumnDensity = autumnDensity
     }
 
     @objc private func setDensity(_ sender: NSMenuItem) {
@@ -210,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func clearSnow() {
-        controllers.forEach { $0.clearSnow() }
+        controllers.forEach { $0.clear() }
     }
 
     @objc func quit() {
@@ -227,10 +302,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSWorkspace.shared.open(url)
-    }
-
-    private func refreshState() {
-        menuModel?.enabled = enabled
-        statusItem?.button?.appearsDisabled = !enabled
     }
 }

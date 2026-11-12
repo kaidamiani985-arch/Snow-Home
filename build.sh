@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP_NAME="Snow On Mac"
+APP_NAME="Seasons On Mac"
 BUNDLE="$APP_NAME.app"
 MIN_MACOS="12.0"
 ARCHS=("arm64" "x86_64")
@@ -49,8 +49,11 @@ done
 lipo -create "${BINARIES[@]}" -output "$BUNDLE/Contents/MacOS/SnowOnMac"
 
 cp Resources/Info.plist "$BUNDLE/Contents/Info.plist"
-if [ -f Resources/Snow.icns ]; then
-  cp Resources/Snow.icns "$BUNDLE/Contents/Resources/Snow.icns"
+if [ -f Resources/Seasons.icns ]; then
+  cp Resources/Seasons.icns "$BUNDLE/Contents/Resources/Seasons.icns"
+fi
+if [ -f Resources/Leaves.png ]; then
+  cp Resources/Leaves.png "$BUNDLE/Contents/Resources/Leaves.png"
 fi
 
 # Local signing. "Snow On Mac Dev" is a self-signed certificate in the login

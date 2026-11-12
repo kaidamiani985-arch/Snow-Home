@@ -125,5 +125,64 @@ enum Shaders {
 
         return float4(col, in.alpha);
     }
+
+    struct LeafInstance {
+        float2 pos;
+        float size;
+        float angle;
+        float alpha;
+        float shape;
+        float flip;
+        float4 tint;
+    };
+
+    struct LeafOut {
+        float4 position [[position]];
+        float2 uv;
+        float alpha;
+        float shape;
+        float flip;
+        float4 tint;
+    };
+
+    vertex LeafOut leaf_vertex(uint vid [[vertex_id]],
+                               uint iid [[instance_id]],
+                               constant Uniforms &u [[buffer(0)]],
+                               const device LeafInstance *instances [[buffer(1)]]) {
+        LeafInstance inst = instances[iid];
+        const float2 corners[6] = {
+            float2(-1.0, -1.0), float2( 1.0, -1.0), float2(-1.0,  1.0),
+            float2(-1.0,  1.0), float2( 1.0, -1.0), float2( 1.0,  1.0)
+        };
+        float2 c = corners[vid];
+        float s = sin(inst.angle);
+        float co = cos(inst.angle);
+        float2 r = float2(c.x * co - c.y * s, c.x * s + c.y * co);
+        float2 p = inst.pos + r * inst.size;
+        float2 ndc = float2(p.x / u.size.x * 2.0 - 1.0,
+                            1.0 - p.y / u.size.y * 2.0);
+        LeafOut o;
+        o.position = float4(ndc, 0.0, 1.0);
+        o.uv = (c + 1.0) * 0.5;
+        o.alpha = inst.alpha;
+        o.shape = inst.shape;
+        o.flip = inst.flip;
+        o.tint = inst.tint;
+        return o;
+    }
+
+    fragment float4 leaf_fragment(LeafOut in [[stage_in]],
+                                  texture2d<float> atlas [[texture(0)]],
+                                  sampler samp [[sampler(0)]]) {
+        float col = fmod(in.shape, 4.0);
+        float row = floor(in.shape / 4.0);
+        float2 uv = in.uv;
+        if (in.flip > 0.5) uv.x = 1.0 - uv.x;
+        uv = (uv + float2(col, row)) / float2(4.0, 2.0);
+        float4 tex = atlas.sample(samp, uv);
+        float a = tex.a * in.alpha * in.tint.a;
+        if (a < 0.02) discard_fragment();
+        return float4(tex.rgb * in.tint.rgb, a);
+    }
     """#
 }

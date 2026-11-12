@@ -4,14 +4,8 @@ import MetalKit
 
 final class OverlayWindow: NSWindow {
     let metalView: MTKView
-    private let renderer: SnowRenderer
 
-    init?(screen: NSScreen, engine: SnowEngine, layer: SnowLayer) {
-        guard let device = MTLCreateSystemDefaultDevice() else { return nil }
-        let samples = 2
-        guard let renderer = SnowRenderer(device: device, engine: engine,
-                                          layer: layer, sampleCount: samples) else { return nil }
-
+    static func makeView(device: MTLDevice, screen: NSScreen, samples: Int) -> MTKView {
         let frame = CGRect(origin: .zero, size: screen.frame.size)
         let view = MTKView(frame: frame, device: device)
         view.sampleCount = samples
@@ -24,10 +18,12 @@ final class OverlayWindow: NSWindow {
         view.preferredFramesPerSecond = 60
         view.isPaused = false
         view.enableSetNeedsDisplay = false
-        view.delegate = renderer
+        return view
+    }
 
+    init(screen: NSScreen, view: MTKView, layer: SnowLayer) {
         self.metalView = view
-        self.renderer = renderer
+        let frame = CGRect(origin: .zero, size: screen.frame.size)
 
         super.init(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
 
@@ -41,7 +37,7 @@ final class OverlayWindow: NSWindow {
         self.acceptsMouseMovedEvents = false
         self.isReleasedWhenClosed = false
         self.level = OverlayWindow.level(for: layer)
-        // Deliberately no `.fullScreenAuxiliary`: the snow should not follow
+        // Deliberately no `.fullScreenAuxiliary`: the overlay should not follow
         // into another app's full-screen space.
         self.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
 
@@ -59,8 +55,8 @@ final class OverlayWindow: NSWindow {
             return NSWindow.Level(rawValue: Int(raw))
         case .front:
             // Above the menu bar background (24) and its item windows (25) so a
-            // snow cap on a window that is flush with the top of the screen is
-            // still visible. Below the notch/status overlays at 27.
+            // cap on a window that is flush with the top of the screen is still
+            // visible. Below the notch/status overlays at 27.
             let raw = CGWindowLevelForKey(.mainMenuWindow) + 2
             return NSWindow.Level(rawValue: Int(raw))
         }

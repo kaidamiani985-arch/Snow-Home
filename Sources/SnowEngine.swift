@@ -6,12 +6,14 @@ enum SnowDensity: Int, CaseIterable {
     case light = 0
     case normal = 1
     case heavy = 2
+    case shower = 3
 
     var flakeCount: Int {
         switch self {
         case .light: return 900
         case .normal: return 2200
         case .heavy: return 3800
+        case .shower: return 5400
         }
     }
 
@@ -20,6 +22,7 @@ enum SnowDensity: Int, CaseIterable {
         case .light: return "Light"
         case .normal: return "Normal"
         case .heavy: return "Heavy"
+        case .shower: return "Shower"
         }
     }
 }
@@ -203,7 +206,7 @@ struct Flake {
     var ignoreID: CGWindowID? = nil
 }
 
-final class SnowEngine {
+final class SnowEngine: SeasonEngine {
     let space: ScreenSpace
     let width: Float
     let height: Float
@@ -290,6 +293,10 @@ final class SnowEngine {
     }
 
     var currentDensity: SnowDensity { density }
+
+    func clear() {
+        clearSnow()
+    }
 
     func clearSnow() {
         ground.heights = [Float](repeating: 0, count: ground.heights.count)
