@@ -106,10 +106,9 @@ final class AutumnEngine: SeasonEngine {
     private var resetWindowSurfaces = false
     private var neverDisappear = false
     private var pendingSpawns = 0
-    /// Shower mode keeps growing until the desktop is saturated. Other modes
-    /// keep the original cap.
+    /// Shower mode has no leaf cap at all. Other modes keep the original cap.
     private var maxLeafCount: Int {
-        density == .shower ? 6000 : 1400
+        density == .shower ? Int.max : 1400
     }
     private var ambientCount = 0
     private var initialSettled = 0
@@ -178,8 +177,14 @@ final class AutumnEngine: SeasonEngine {
     private func rebuildLeaves() {
         let count = density.leafCount
         leaves = [Leaf](repeating: Leaf(), count: count)
-        ambientCount = max(24, Int(Float(count) * 0.30))
-        initialSettled = max(10, Int(Float(count) * 0.10))
+        if density == .shower {
+            // A shower is all air: every initial leaf is falling.
+            ambientCount = count
+            initialSettled = 0
+        } else {
+            ambientCount = max(24, Int(Float(count) * 0.30))
+            initialSettled = max(10, Int(Float(count) * 0.10))
+        }
         settledCount = 0
         backLeaves.removeAll(keepingCapacity: true)
         frontLeaves.removeAll(keepingCapacity: true)
@@ -222,11 +227,25 @@ final class AutumnEngine: SeasonEngine {
         leaf.size = Float.random(in: 7...13)
         leaf.radius = leaf.size * 0.55
         leaf.pos.x = Float.random(in: -20...(width + 20))
-        leaf.pos.y = spread
-            ? -Float.random(in: 10...max(20, height * 0.85))
-            : -Float.random(in: 10...70)
+        let fallingUp = gravityDir.y < -0.25
+        if fallingUp {
+            leaf.pos.y = spread
+                ? height + Float.random(in: 10...max(20, height * 0.85))
+                : height + Float.random(in: 10...70)
+            leaf.vel = SIMD2(
+                Float.random(in: -8...8) + gravityDir.x * 30,
+                -Float.random(in: 20...50)
+            )
+        } else {
+            leaf.pos.y = spread
+                ? -Float.random(in: 10...max(20, height * 0.85))
+                : -Float.random(in: 10...70)
+            leaf.vel = SIMD2(
+                Float.random(in: -8...8) + gravityDir.x * 30,
+                Float.random(in: 20...50)
+            )
+        }
         leaf.prevPos = leaf.pos
-        leaf.vel = SIMD2(Float.random(in: -8...8), Float.random(in: 20...50))
         leaf.terminal = Float.random(in: 55...105)
         leaf.flutter = Float.random(in: 3...9)
         leaf.layer = Float.random(in: 0..<1) < 0.65 ? .front : .back
@@ -261,6 +280,12 @@ final class AutumnEngine: SeasonEngine {
         }
         WindowTracker.shared.refreshIfNeeded(now: now)
         if WindowTracker.shared.isMissionControl {
+            clearRender()
+            return
+        }
+        if WindowTracker.shared.coversDisplay(space,
+                                              width: CGFloat(width),
+                                              height: CGFloat(height)) {
             clearRender()
             return
         }
@@ -580,23 +605,42 @@ final class AutumnEngine: SeasonEngine {
             leaf.angle += leaf.angVel * dt
             leaf.angVel *= 0.995
 
+            var landed = false
             if leaf.pos.x < leaf.radius {
                 leaf.pos.x = leaf.radius
                 if leaf.vel.x < 0 { leaf.vel.x = -leaf.vel.x * 0.2 }
+                if gravityDir.x < -0.20 { landed = true }
             } else if leaf.pos.x > width - leaf.radius {
                 leaf.pos.x = width - leaf.radius
                 if leaf.vel.x > 0 { leaf.vel.x = -leaf.vel.x * 0.2 }
+                if gravityDir.x > 0.20 { landed = true }
             }
-            if !leaf.ambient && leaf.pos.y - leaf.radius < 0 {
+            if gravityDir.y < -0.25 && leaf.pos.y - leaf.radius < 0 {
                 leaf.pos.y = leaf.radius
                 if leaf.vel.y < 0 { leaf.vel.y = 0 }
+                landed = true
+            }
+            if gravityDir.y > 0.25 && leaf.pos.y + leaf.radius > height {
+                leaf.pos.y = height - leaf.radius
+                if leaf.vel.y > 0 { leaf.vel.y = 0 }
+                landed = true
             }
 
-            let landed = resolveSurface(&leaf)
+            landed = resolveSurface(&leaf) || landed
             resolveIconSides(&leaf)
             resolveWindowSides(&leaf)
 
             if leaf.pos.y > height + 80 {
+                if leaf.ambient {
+                    spawnAmbient(&leaf)
+                } else {
+                    leaf.active = false
+                    settledCount = max(0, settledCount - 1)
+                }
+                leaves[i] = leaf
+                continue
+            }
+            if leaf.pos.y < -height - 80 {
                 if leaf.ambient {
                     spawnAmbient(&leaf)
                 } else {
@@ -645,7 +689,7 @@ final class AutumnEngine: SeasonEngine {
         let ignoringSupports = time < leaf.noSupportUntil
 
         if !ignoringSupports, leaf.support != 0, let s = surfaces[leaf.support],
-           !s.isMoving,
+           !s.isMoving, gravityDir.y > 0.15,
            leaf.pos.x >= s.x0, leaf.pos.x <= s.x1 {
             let sy = s.surfaceY(leaf.pos.x)
             if leaf.pos.y + leaf.radius >= sy - 8,
@@ -880,7 +924,7 @@ final class AutumnEngine: SeasonEngine {
             guard leaves[i].active, !leaves[i].asleep, !leaves[i].fading else { continue }
             resolveIconSides(&leaves[i])
             resolveWindowSides(&leaves[i])
-            if leaves[i].pos.y + leaves[i].radius > height {
+            if gravityDir.y > 0.15 && leaves[i].pos.y + leaves[i].radius > height {
                 leaves[i].pos.y = height - leaves[i].radius
                 if leaves[i].vel.y > 0 { leaves[i].vel.y = 0 }
             }

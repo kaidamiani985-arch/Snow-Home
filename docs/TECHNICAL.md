@@ -71,10 +71,10 @@ that disappears). Sleeping leaves act as static obstacles in the collision
 solver, which keeps large piles calm.
 
 Density maps to leaf counts: Light 220, Normal 420, Heavy 700, Shower 1400
-initial bodies. With *Leaves never disappear* on, the pool grows by one body
-each time an ambient leaf settles. Shower raises the growth cap from 1400 to
-6000, which is enough to saturate a normal desktop; other densities keep the
-original cap.
+initial bodies. Shower starts with every initial body falling, for a much
+denser shower. With *Leaves never disappear* on, the pool grows by one body
+each time an ambient leaf settles. Shower removes the growth cap entirely;
+other densities keep the original 1400 cap.
 
 ### Collisions
 
@@ -128,8 +128,12 @@ undocumented `AppleSPUHIDDevice` in the IOKit registry (vendor usage page
    little-endian `Int32` at offsets 6, 10, and 14, scaled by 65536 to g.
 4. Decimates ~8×, low-passes x/y, subtracts the reference captured when the
    toggle was enabled, and maps the tilt to a 2-D screen-space gravity vector.
-5. The autumn engine smooths toward that vector and wakes settled leaves when
-   the direction changes significantly.
+   The sign of the z axis flips the default vertical when the laptop is turned
+   over, so the full 360° range is covered: upside down sends leaves to the top
+   of the screen.
+5. The autumn engine smooths toward that vector, wakes settled leaves when the
+   direction changes significantly, and treats all four screen edges as
+   containers so piles can form on any border.
 
 The toggle is off by default, only runs in autumn while the weather is enabled,
 and is disabled automatically on Macs without the sensor. No root helper is
@@ -195,5 +199,6 @@ Tools/makeicon.swift    generates the app icon
 - Desktop icon weather requires **System Settings → Privacy & Security →
   Accessibility**. Without it the rest of the effect runs normally; only the
   icon platforms are skipped.
-- Shower mode is intentionally heavy. The leaf count grows to 6000 only when
-  *Leaves never disappear* is on; lower densities keep the original 1400 cap.
+- Shower mode is intentionally heavy. With *Leaves never disappear* on, the
+  leaf pool keeps growing without a cap; lower densities keep the original
+  1400 cap.

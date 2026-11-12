@@ -45,6 +45,21 @@ final class WindowTracker {
         refresh(now: now)
     }
 
+    /// True when a normal window covers this display including the menu bar.
+    /// This is a fallback for full-screen Spaces that SkyLight reports late or
+    /// not at all (for example when the app is launched inside one).
+    func coversDisplay(_ space: ScreenSpace, width: CGFloat, height: CGFloat) -> Bool {
+        for w in windows where !w.isDock {
+            let lr = space.toLocal(w.bounds)
+            if lr.minY <= 1,
+               lr.width >= width - 8,
+               lr.height >= height - 8 {
+                return true
+            }
+        }
+        return false
+    }
+
     private func refresh(now: CFTimeInterval) {
         guard let raw = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements],

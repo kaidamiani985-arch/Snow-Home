@@ -410,6 +410,16 @@ final class SnowEngine: SeasonEngine {
             hasLastCursor = false
             return
         }
+        if WindowTracker.shared.coversDisplay(space,
+                                              width: CGFloat(width),
+                                              height: CGFloat(height)) {
+            backFlakes.removeAll(keepingCapacity: true)
+            frontFlakes.removeAll(keepingCapacity: true)
+            backDrift.removeAll(keepingCapacity: true)
+            frontDrift.removeAll(keepingCapacity: true)
+            hasLastCursor = false
+            return
+        }
         syncPlatforms(now: now)
 
 

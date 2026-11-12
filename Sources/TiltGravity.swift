@@ -84,6 +84,7 @@ final class TiltGravity {
         }
         let ax = Float(i32(6)) / 65536
         let ay = Float(i32(10)) / 65536
+        let az = Float(i32(14)) / 65536
 
         smoothed.x += (ax - smoothed.x) * 0.12
         smoothed.y += (ay - smoothed.y) * 0.12
@@ -94,10 +95,12 @@ final class TiltGravity {
             return
         }
 
-        // Screen space: x right, y down. A tilt toward the top edge of the
-        // Mac gives +ay, which is upward on screen, hence the minus sign.
+        // Screen space: x right, y down. The z axis tells us which face of the
+        // screen is up. When the laptop is flipped over, the default "down"
+        // becomes the top of the screen, giving a full 360-degree container.
+        let flip = -tanh(az * 3)
         var gx = (smoothed.x - reference.x) * gain
-        var gy = 1 - (smoothed.y - reference.y) * gain
+        var gy = flip - (smoothed.y - reference.y) * gain
         gx = max(-1.6, min(1.6, gx))
         gy = max(-1.6, min(1.6, gy))
         let len = sqrt(gx * gx + gy * gy)

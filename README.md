@@ -24,7 +24,7 @@
 | **Autumn** | Every leaf is its own body. Leaves fall, keep their shape and angle, pile up, and slide off edges. |
 | **More** | Spring and summer are planned. Only one season runs at a time. |
 
-Both seasons have **Light**, **Normal**, **Heavy**, and **Shower** density. Shower is the new ultra mode: a full screen of leaves, and with *Leaves never disappear* it keeps growing until the desktop is saturated.
+Both seasons have **Light**, **Normal**, **Heavy**, and **Shower** density. Shower is the new ultra mode: a full screen of falling leaves, and with *Leaves never disappear* it keeps growing without a cap until the desktop is saturated.
 
 ### Autumn extras
 
@@ -50,7 +50,7 @@ Snow sticks to window tops and rides with the window. Leaves deliberately do not
 - Leaves collide with each other, window tops and sides, desktop icon sides, the Dock, and the ground.
 - Moving windows shove leaves around; leaves on background windows hide behind whichever window is in front.
 - Closing a window lets its leaves keep falling.
-- Shower mode for both seasons, with an effectively uncapped leaf count in autumn when leaves never disappear.
+- Shower mode for both seasons, with no leaf cap in autumn when leaves never disappear.
 - Optional tilt gravity from the MacBook motion sensor.
 - Full-screen apps and Spaces stay weather-free.
 - A native menu bar panel and a small welcome window.
