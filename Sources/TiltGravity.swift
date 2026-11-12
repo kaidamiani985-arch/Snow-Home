@@ -86,8 +86,8 @@ final class TiltGravity {
         let ay = Float(i32(10)) / 65536
         let az = Float(i32(14)) / 65536
 
-        smoothed.x += (ax - smoothed.x) * 0.12
-        smoothed.y += (ay - smoothed.y) * 0.12
+        smoothed.x += (ax - smoothed.x) * 0.35
+        smoothed.y += (ay - smoothed.y) * 0.35
 
         if !hasReference {
             reference = smoothed

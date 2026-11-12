@@ -28,6 +28,8 @@ private struct Leaf {
     var active = false
     var asleep = false
     var sleepTimer: Float = 0
+    /// True when this leaf is resting on another leaf, not just a surface.
+    var supported = false
     var group: UInt64 = 0
     var support: UInt64 = 0
     var settledAt: Float = 0
@@ -215,7 +217,7 @@ final class AutumnEngine: SeasonEngine {
     private func spawnSettledGround(_ leaf: inout Leaf) {
         resetCommon(&leaf)
         leaf.size = Float.random(in: 7...13)
-        leaf.radius = leaf.size * 0.70
+        leaf.radius = leaf.size * 0.80
         leaf.pos = SIMD2(Float.random(in: leaf.radius...(width - leaf.radius)),
                          height - leaf.radius - Float.random(in: 0...4))
         leaf.prevPos = leaf.pos
@@ -231,7 +233,7 @@ final class AutumnEngine: SeasonEngine {
     private func spawnAmbient(_ leaf: inout Leaf, spread: Bool = false) {
         resetCommon(&leaf)
         leaf.size = Float.random(in: 7...13)
-        leaf.radius = leaf.size * 0.70
+        leaf.radius = leaf.size * 0.80
         leaf.pos.x = Float.random(in: -20...(width + 20))
         let fallingUp = gravityDir.y < -0.25
         if fallingUp {
@@ -563,7 +565,7 @@ final class AutumnEngine: SeasonEngine {
     private func updateLeaves(dt: Float) {
         let tilt = TiltGravity.shared
         let targetGravity = tilt.enabled ? tilt.gravity : SIMD2<Float>(0, 1)
-        gravityDir += (targetGravity - gravityDir) * min(1, dt * 6)
+        gravityDir += (targetGravity - gravityDir) * min(1, dt * 22)
 
         // When the Mac is tilted far enough, wake the settled pile so it can
         // slide in the new direction. Once the tilt is steady, the leaves are
@@ -678,7 +680,7 @@ final class AutumnEngine: SeasonEngine {
                 continue
             }
 
-            if landed {
+            if landed || leaf.supported {
                 let speed = sqrt(leaf.vel.x * leaf.vel.x + leaf.vel.y * leaf.vel.y)
                 if speed < 4 && abs(leaf.angVel) < 0.08 {
                     leaf.sleepTimer += dt
@@ -711,32 +713,41 @@ final class AutumnEngine: SeasonEngine {
         pushWithWindows()
         processPendingSpawns()
         growShowerIfNeeded(dt: dt)
-        trimDockPile()
+        trimSurfacePiles()
     }
 
-    /// The Dock is a narrow front-layer shelf. Letting a huge pile build there
-    /// looks like a compressed strip, so keep it to roughly one layer and let
-    /// the excess fall to the desktop behind it.
-    private func trimDockPile() {
-        guard let dock = surfaces[dockID] else { return }
-        let maxLeaves = max(40, Int((dock.x1 - dock.x0) / 14))
-        var count = 0
-        for i in leaves.indices where leaves[i].active && leaves[i].group == dockID {
-            count += 1
+    /// Window tops, icons, and the Dock are shelves. Letting leaves pile into
+    /// thick compressed masses there looks bad, so keep each shelf to roughly
+    /// one layer and let the excess fall to the desktop.
+    private func trimSurfacePiles() {
+        var groups: [UInt64: [Int]] = [:]
+        for i in leaves.indices where leaves[i].active
+            && !leaves[i].ambient && !leaves[i].fading {
+            groups[leaves[i].group, default: []].append(i)
         }
-        guard count > maxLeaves else { return }
-        var released = 0
-        let excess = count - maxLeaves
-        for i in leaves.indices where leaves[i].active && leaves[i].group == dockID {
-            guard released < excess else { break }
-            leaves[i].asleep = false
-            leaves[i].sleepTimer = 0
-            leaves[i].group = 0
-            leaves[i].support = 0
-            leaves[i].noSupportUntil = time + 0.6
-            leaves[i].vel.x += Float.random(in: -25...25)
-            leaves[i].vel.y += 12
-            released += 1
+        for (id, indices) in groups {
+            guard id != groundID, let s = surfaces[id] else { continue }
+            let width = s.x1 - s.x0
+            let maxLeaves: Int
+            if s.isIcon {
+                maxLeaves = max(6, Int(width / 12))
+            } else if s.isDock {
+                maxLeaves = max(40, Int(width / 14))
+            } else {
+                maxLeaves = max(24, Int(width / 10))
+            }
+            guard indices.count > maxLeaves else { continue }
+            let excess = indices.count - maxLeaves
+            for k in 0..<excess {
+                let i = indices[k]
+                leaves[i].asleep = false
+                leaves[i].sleepTimer = 0
+                leaves[i].group = 0
+                leaves[i].support = 0
+                leaves[i].noSupportUntil = time + 0.6
+                leaves[i].vel.x += Float.random(in: -25...25)
+                leaves[i].vel.y += 10
+            }
         }
     }
 
@@ -898,6 +909,9 @@ final class AutumnEngine: SeasonEngine {
     }
 
     private func resolveLeafCollisions(dt: Float) {
+        for i in leaves.indices where leaves[i].active {
+            leaves[i].supported = false
+        }
         // A couple of relaxation passes keep dense piles from jittering. The
         // buckets are rebuilt each pass because leaves move a little.
         for pass in 0..<2 {
@@ -951,6 +965,14 @@ final class AutumnEngine: SeasonEngine {
         let overlap = minDist - d
         let slop: Float = 0.5
         let correction = max(0, overlap - slop) * relaxation
+
+        // A mostly-vertical contact means the upper leaf is resting on the
+        // lower one. This must be set even when the overlap is inside the
+        // slop, otherwise settled stacks never get credit for being supported.
+        if abs(dy) > abs(dx) * 0.4 {
+            let upper = dy > 0 ? i : j
+            leaves[upper].supported = true
+        }
         guard correction > 0.0001 else { return }
 
         let rvx = leaves[j].vel.x - leaves[i].vel.x
@@ -975,7 +997,7 @@ final class AutumnEngine: SeasonEngine {
                 let friction = vt * 0.18
                 leaves[i].vel.x += tx * friction
                 leaves[i].vel.y += ty * friction
-                if overlap > 1.2 || abs(vn) > 12 {
+                if overlap > 3.0 || abs(vn) > 25 {
                     leaves[i].sleepTimer = 0
                 }
                 return
@@ -1010,7 +1032,7 @@ final class AutumnEngine: SeasonEngine {
         leaves[j].vel.x -= tx * friction * wj
         leaves[j].vel.y -= ty * friction * wj
 
-        if overlap > 1.2 || abs(vn) > 12 {
+        if overlap > 3.0 || abs(vn) > 25 {
             leaves[i].sleepTimer = 0
             leaves[j].sleepTimer = 0
         }
