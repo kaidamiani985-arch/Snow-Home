@@ -177,7 +177,9 @@ final class AutumnEngine: SeasonEngine {
             : Int(Float(count) * 0.15)
         for _ in 0..<initialSettled {
             guard let i = firstInactiveIndex() else { break }
-            settleInitialGround(&leaves[i], index: i)
+            var leaf = Leaf()
+            settleInitialGround(&leaf, index: i)
+            leaves[i] = leaf
         }
         for _ in 0..<min(targetAmbient, count - settledCount) {
             guard let i = firstInactiveIndex() else { break }
@@ -612,7 +614,11 @@ final class AutumnEngine: SeasonEngine {
         removeFromGrid(leafIndex: index, surface: s, x: x)
         leaves[index].surface = 0
         leaves[index].settledAt = 0
-        leaves[index].vel = SIMD2(Float.random(in: -25...25), -10)
+        leaves[index].pos.y -= 2
+        leaves[index].vel = SIMD2(
+            Float.random(in: -25...25),
+            -25 - Float.random(in: 0...15)
+        )
         settledCount = max(0, settledCount - 1)
 
         guard cascade else { return }
