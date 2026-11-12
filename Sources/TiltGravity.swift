@@ -18,7 +18,6 @@ final class TiltGravity {
     private var smoothed = SIMD2<Float>(0, 0)
     private var reference = SIMD2<Float>(0, 0)
     private var hasReference = false
-    private let gain: Float = 2.8
 
     private init() {}
 
@@ -84,7 +83,6 @@ final class TiltGravity {
         }
         let ax = Float(i32(6)) / 65536
         let ay = Float(i32(10)) / 65536
-        let az = Float(i32(14)) / 65536
 
         smoothed.x += (ax - smoothed.x) * 0.50
         smoothed.y += (ay - smoothed.y) * 0.50
@@ -95,18 +93,30 @@ final class TiltGravity {
             return
         }
 
-        // Screen space: x right, y down. The z axis tells us which face of the
-        // screen is up. When the laptop is flipped over, the default "down"
-        // becomes the top of the screen, giving a full 360-degree container.
-        let flip = -tanh(az * 3)
-        var gx = (smoothed.x - reference.x) * gain
-        var gy = flip - (smoothed.y - reference.y) * gain
-        gx = max(-1.6, min(1.6, gx))
-        gy = max(-1.6, min(1.6, gy))
-        let len = sqrt(gx * gx + gy * gy)
+        // Screen space: x right, y down. Use the in-plane tilt as a direction
+        // and blend away from the default downward vector. A minimum downward
+        // component keeps the leaves from ever piling on the top edge.
+        let dx = smoothed.x - reference.x
+        let dy = smoothed.y - reference.y
+        let mag = sqrt(dx * dx + dy * dy)
+        let blend = min(1, mag / 0.12)
+        let inX: Float = mag > 0.001 ? dx / mag : 0
+        let inY: Float = mag > 0.001 ? -dy / mag : 1
+        var gx = inX * blend
+        var gy = 1 - blend + inY * blend
+        var len = sqrt(gx * gx + gy * gy)
         if len > 0.001 {
             gx /= len
             gy /= len
+        }
+        // Never let gravity point more than ~75 degrees away from down.
+        if gy < 0.25 {
+            gy = 0.25
+            len = sqrt(gx * gx + gy * gy)
+            if len > 0.001 {
+                gx /= len
+                gy /= len
+            }
         }
         gravity = SIMD2(gx, gy)
     }
