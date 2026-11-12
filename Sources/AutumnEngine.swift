@@ -217,7 +217,7 @@ final class AutumnEngine: SeasonEngine {
     private func spawnSettledGround(_ leaf: inout Leaf) {
         resetCommon(&leaf)
         leaf.size = Float.random(in: 7...13)
-        leaf.radius = leaf.size * 0.95
+        leaf.radius = leaf.size * 0.80
         leaf.pos = SIMD2(Float.random(in: leaf.radius...(width - leaf.radius)),
                          height - leaf.radius - Float.random(in: 0...4))
         leaf.prevPos = leaf.pos
@@ -233,7 +233,7 @@ final class AutumnEngine: SeasonEngine {
     private func spawnAmbient(_ leaf: inout Leaf, spread: Bool = false) {
         resetCommon(&leaf)
         leaf.size = Float.random(in: 7...13)
-        leaf.radius = leaf.size * 0.95
+        leaf.radius = leaf.size * 0.80
         leaf.pos.x = Float.random(in: -20...(width + 20))
         let fallingUp = gravityDir.y < -0.25
         if fallingUp {
@@ -572,7 +572,7 @@ final class AutumnEngine: SeasonEngine {
         // slide in the new direction. Once the tilt is steady, the leaves are
         // allowed to fall asleep again.
         let gravityDelta = length(gravityDir - lastWakeGravity)
-        if gravityDelta > 0.03 {
+        if gravityDelta > 0.12 {
             lastWakeGravity = gravityDir
             for i in leaves.indices where leaves[i].active && leaves[i].asleep {
                 leaves[i].asleep = false
@@ -584,8 +584,8 @@ final class AutumnEngine: SeasonEngine {
         // so a tilt is visible immediately instead of waiting for the old
         // velocity to bleed off.
         let turn = 1 - dot(previousGravity, targetGravity)
-        let tiltImpulse: SIMD2<Float> = turn > 0.015
-            ? (targetGravity - previousGravity) * 55
+        let tiltImpulse: SIMD2<Float> = turn > 0.10
+            ? (targetGravity - previousGravity) * 40
             : SIMD2<Float>(0, 0)
 
         if density == .shower {
@@ -934,7 +934,7 @@ final class AutumnEngine: SeasonEngine {
         }
         // Several relaxation passes keep dense piles from jittering. The
         // buckets are rebuilt each pass because leaves move a little.
-        for pass in 0..<3 {
+        for pass in 0..<2 {
             buildLeafBuckets()
             let relaxation: Float = pass == 0 ? 0.40 : 0.30
             for i in leaves.indices {
@@ -1038,19 +1038,22 @@ final class AutumnEngine: SeasonEngine {
         leaves[j].pos.y += ny * correction * wj
 
         if vn < 0 {
-            // Low restitution: leaves should settle, not bounce like rubber.
-            let impulse = -vn * 0.18
+            // Almost no restitution. Position correction does the work; the
+            // old bounce was pumping energy into dense piles.
+            let impulse = -vn * 0.04
             leaves[i].vel.x -= nx * impulse * wi
             leaves[i].vel.y -= ny * impulse * wi
             leaves[j].vel.x += nx * impulse * wj
             leaves[j].vel.y += ny * impulse * wj
         }
 
-        let friction = vt * 0.16
+        let friction = vt * 0.20
         leaves[i].vel.x += tx * friction * wi
         leaves[i].vel.y += ty * friction * wi
         leaves[j].vel.x -= tx * friction * wj
         leaves[j].vel.y -= ty * friction * wj
+        leaves[i].vel *= 0.96
+        leaves[j].vel *= 0.96
 
         if overlap > 5.0 || abs(vn) > 40 {
             leaves[i].sleepTimer = 0
