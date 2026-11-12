@@ -565,19 +565,28 @@ final class AutumnEngine: SeasonEngine {
     private func updateLeaves(dt: Float) {
         let tilt = TiltGravity.shared
         let targetGravity = tilt.enabled ? tilt.gravity : SIMD2<Float>(0, 1)
-        gravityDir += (targetGravity - gravityDir) * min(1, dt * 22)
+        let previousGravity = gravityDir
+        gravityDir = targetGravity
 
         // When the Mac is tilted far enough, wake the settled pile so it can
         // slide in the new direction. Once the tilt is steady, the leaves are
         // allowed to fall asleep again.
         let gravityDelta = length(gravityDir - lastWakeGravity)
-        if gravityDelta > 0.08 {
+        if gravityDelta > 0.03 {
             lastWakeGravity = gravityDir
             for i in leaves.indices where leaves[i].active && leaves[i].asleep {
                 leaves[i].asleep = false
                 leaves[i].sleepTimer = 0
             }
         }
+
+        // Give the leaves a small one-frame kick in the new gravity direction
+        // so a tilt is visible immediately instead of waiting for the old
+        // velocity to bleed off.
+        let turn = 1 - dot(previousGravity, targetGravity)
+        let tiltImpulse: SIMD2<Float> = turn > 0.015
+            ? (targetGravity - previousGravity) * 55
+            : SIMD2<Float>(0, 0)
 
         if density == .shower && gravityDir.y > 0.5 {
             var topmostGround = height
@@ -625,6 +634,8 @@ final class AutumnEngine: SeasonEngine {
             leaf.prevPos = leaf.pos
             leaf.vel.x += gravityDir.x * gravityMagnitude * dt
             leaf.vel.y += gravityDir.y * gravityMagnitude * dt
+            leaf.vel.x += tiltImpulse.x
+            leaf.vel.y += tiltImpulse.y
             if leaf.vel.y > leaf.terminal { leaf.vel.y = leaf.terminal }
             leaf.vel.x += (windBase + sin(time * 1.4 + leaf.phase) * leaf.flutter) * dt
             leaf.vel *= 0.995
@@ -709,6 +720,7 @@ final class AutumnEngine: SeasonEngine {
 
         resolveLeafCollisions(dt: dt)
         resolvePileConstraints()
+        settleShowerPile()
         pushWithCursor()
         pushWithWindows()
         processPendingSpawns()
@@ -916,7 +928,7 @@ final class AutumnEngine: SeasonEngine {
         // buckets are rebuilt each pass because leaves move a little.
         for pass in 0..<2 {
             buildLeafBuckets()
-            let relaxation: Float = pass == 0 ? 0.65 : 0.45
+            let relaxation: Float = pass == 0 ? 0.40 : 0.30
             for i in leaves.indices {
                 guard leaves[i].active, !leaves[i].asleep, !leaves[i].fading else { continue }
                 let cx = Int(floor(leaves[i].pos.x / cellSize))
@@ -997,7 +1009,7 @@ final class AutumnEngine: SeasonEngine {
                 let friction = vt * 0.18
                 leaves[i].vel.x += tx * friction
                 leaves[i].vel.y += ty * friction
-                if overlap > 3.0 || abs(vn) > 25 {
+                if overlap > 5.0 || abs(vn) > 40 {
                     leaves[i].sleepTimer = 0
                 }
                 return
@@ -1032,7 +1044,7 @@ final class AutumnEngine: SeasonEngine {
         leaves[j].vel.x -= tx * friction * wj
         leaves[j].vel.y -= ty * friction * wj
 
-        if overlap > 3.0 || abs(vn) > 25 {
+        if overlap > 5.0 || abs(vn) > 40 {
             leaves[i].sleepTimer = 0
             leaves[j].sleepTimer = 0
         }
@@ -1041,6 +1053,25 @@ final class AutumnEngine: SeasonEngine {
     /// Re-apply solid constraints after leaf-leaf collisions, otherwise a
     /// dense pile can squeeze leaves back into a window or through the floor
     /// for a frame.
+    /// Shower piles can contain thousands of bodies. Once a supported leaf is
+    /// moving slowly, freeze it immediately instead of letting the pair solver
+    /// jitter it forever. Cursor/window pushes run afterwards and wake it again.
+    private func settleShowerPile() {
+        guard density == .shower else { return }
+        for i in leaves.indices {
+            guard leaves[i].active, !leaves[i].asleep, !leaves[i].ambient,
+                  !leaves[i].fading, leaves[i].supported else { continue }
+            let speed2 = leaves[i].vel.x * leaves[i].vel.x
+                + leaves[i].vel.y * leaves[i].vel.y
+            if speed2 < 400 {
+                leaves[i].asleep = true
+                leaves[i].vel = .zero
+                leaves[i].angVel = 0
+                leaves[i].sleepTimer = 0
+            }
+        }
+    }
+
     private func resolvePileConstraints() {
         let maxSpeed: Float = 1300
         for i in leaves.indices {

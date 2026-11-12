@@ -74,7 +74,7 @@ final class TiltGravity {
     fileprivate func handleReport(_ report: UnsafeMutablePointer<UInt8>, length: Int) {
         guard length >= 22 else { return }
         sampleCounter &+= 1
-        guard sampleCounter % 8 == 0 else { return }
+        guard sampleCounter % 4 == 0 else { return }
 
         func i32(_ offset: Int) -> Int32 {
             Int32(report[offset])
@@ -86,8 +86,8 @@ final class TiltGravity {
         let ay = Float(i32(10)) / 65536
         let az = Float(i32(14)) / 65536
 
-        smoothed.x += (ax - smoothed.x) * 0.35
-        smoothed.y += (ay - smoothed.y) * 0.35
+        smoothed.x += (ax - smoothed.x) * 0.65
+        smoothed.y += (ay - smoothed.y) * 0.65
 
         if !hasReference {
             reference = smoothed
