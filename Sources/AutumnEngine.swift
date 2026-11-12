@@ -217,7 +217,7 @@ final class AutumnEngine: SeasonEngine {
     private func spawnSettledGround(_ leaf: inout Leaf) {
         resetCommon(&leaf)
         leaf.size = Float.random(in: 7...13)
-        leaf.radius = leaf.size * 0.80
+        leaf.radius = leaf.size * 0.95
         leaf.pos = SIMD2(Float.random(in: leaf.radius...(width - leaf.radius)),
                          height - leaf.radius - Float.random(in: 0...4))
         leaf.prevPos = leaf.pos
@@ -233,7 +233,7 @@ final class AutumnEngine: SeasonEngine {
     private func spawnAmbient(_ leaf: inout Leaf, spread: Bool = false) {
         resetCommon(&leaf)
         leaf.size = Float.random(in: 7...13)
-        leaf.radius = leaf.size * 0.80
+        leaf.radius = leaf.size * 0.95
         leaf.pos.x = Float.random(in: -20...(width + 20))
         let fallingUp = gravityDir.y < -0.25
         if fallingUp {
@@ -588,15 +588,24 @@ final class AutumnEngine: SeasonEngine {
             ? (targetGravity - previousGravity) * 55
             : SIMD2<Float>(0, 0)
 
-        if density == .shower && gravityDir.y > 0.5 {
-            var topmostGround = height
-            for i in leaves.indices where leaves[i].active && leaves[i].asleep
-                && leaves[i].group == groundID {
-                if leaves[i].pos.y < topmostGround {
-                    topmostGround = leaves[i].pos.y
-                }
+        if density == .shower {
+            var topmost = height
+            var bottommost: Float = 0
+            var leftmost = width
+            var rightmost: Float = 0
+            for i in leaves.indices where leaves[i].active && !leaves[i].ambient {
+                let p = leaves[i].pos
+                if p.y > height - 500 && p.y < topmost { topmost = p.y }
+                if p.y < 500 && p.y > bottommost { bottommost = p.y }
+                if p.x < 500 && p.x > rightmost { rightmost = p.x }
+                if p.x > width - 500 && p.x < leftmost { leftmost = p.x }
             }
-            pileSaturated = height - topmostGround > 220
+            var maxDepth: Float = 0
+            if gravityDir.y > 0.3 { maxDepth = max(maxDepth, height - topmost) }
+            if gravityDir.y < -0.3 { maxDepth = max(maxDepth, bottommost) }
+            if gravityDir.x < -0.3 { maxDepth = max(maxDepth, rightmost) }
+            if gravityDir.x > 0.3 { maxDepth = max(maxDepth, width - leftmost) }
+            pileSaturated = maxDepth > 220
         } else {
             pileSaturated = false
         }
@@ -720,7 +729,6 @@ final class AutumnEngine: SeasonEngine {
 
         resolveLeafCollisions(dt: dt)
         resolvePileConstraints()
-        settleShowerPile()
         pushWithCursor()
         pushWithWindows()
         processPendingSpawns()
@@ -924,9 +932,9 @@ final class AutumnEngine: SeasonEngine {
         for i in leaves.indices where leaves[i].active {
             leaves[i].supported = false
         }
-        // A couple of relaxation passes keep dense piles from jittering. The
+        // Several relaxation passes keep dense piles from jittering. The
         // buckets are rebuilt each pass because leaves move a little.
-        for pass in 0..<2 {
+        for pass in 0..<3 {
             buildLeafBuckets()
             let relaxation: Float = pass == 0 ? 0.40 : 0.30
             for i in leaves.indices {
@@ -1053,25 +1061,6 @@ final class AutumnEngine: SeasonEngine {
     /// Re-apply solid constraints after leaf-leaf collisions, otherwise a
     /// dense pile can squeeze leaves back into a window or through the floor
     /// for a frame.
-    /// Shower piles can contain thousands of bodies. Once a supported leaf is
-    /// moving slowly, freeze it immediately instead of letting the pair solver
-    /// jitter it forever. Cursor/window pushes run afterwards and wake it again.
-    private func settleShowerPile() {
-        guard density == .shower else { return }
-        for i in leaves.indices {
-            guard leaves[i].active, !leaves[i].asleep, !leaves[i].ambient,
-                  !leaves[i].fading, leaves[i].supported else { continue }
-            let speed2 = leaves[i].vel.x * leaves[i].vel.x
-                + leaves[i].vel.y * leaves[i].vel.y
-            if speed2 < 400 {
-                leaves[i].asleep = true
-                leaves[i].vel = .zero
-                leaves[i].angVel = 0
-                leaves[i].sleepTimer = 0
-            }
-        }
-    }
-
     private func resolvePileConstraints() {
         let maxSpeed: Float = 1300
         for i in leaves.indices {
