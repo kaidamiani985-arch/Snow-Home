@@ -106,11 +106,15 @@ final class AutumnEngine: SeasonEngine {
     private var resetWindowSurfaces = false
     private var neverDisappear = false
     private var pendingSpawns = 0
+    private var showerSpawnAccumulator: Float = 0
+    private var frameTimeAvg: Float = 1.0 / 60.0
+    private var pileSaturated = false
     /// Shower mode has no leaf cap at all. Other modes keep the original cap.
     private var maxLeafCount: Int {
         density == .shower ? Int.max : 1400
     }
     private var ambientCount = 0
+    private var targetAmbient = 0
     private var initialSettled = 0
     private var settledCount = 0
 
@@ -185,10 +189,12 @@ final class AutumnEngine: SeasonEngine {
             ambientCount = max(24, Int(Float(count) * 0.30))
             initialSettled = max(10, Int(Float(count) * 0.10))
         }
+        targetAmbient = ambientCount
         settledCount = 0
         backLeaves.removeAll(keepingCapacity: true)
         frontLeaves.removeAll(keepingCapacity: true)
         pendingSpawns = 0
+        pileSaturated = false
 
         for _ in 0..<min(initialSettled, count) {
             guard let i = firstInactiveIndex() else { break }
@@ -209,7 +215,7 @@ final class AutumnEngine: SeasonEngine {
     private func spawnSettledGround(_ leaf: inout Leaf) {
         resetCommon(&leaf)
         leaf.size = Float.random(in: 7...13)
-        leaf.radius = leaf.size * 0.55
+        leaf.radius = leaf.size * 0.70
         leaf.pos = SIMD2(Float.random(in: leaf.radius...(width - leaf.radius)),
                          height - leaf.radius - Float.random(in: 0...4))
         leaf.prevPos = leaf.pos
@@ -225,7 +231,7 @@ final class AutumnEngine: SeasonEngine {
     private func spawnAmbient(_ leaf: inout Leaf, spread: Bool = false) {
         resetCommon(&leaf)
         leaf.size = Float.random(in: 7...13)
-        leaf.radius = leaf.size * 0.55
+        leaf.radius = leaf.size * 0.70
         leaf.pos.x = Float.random(in: -20...(width + 20))
         let fallingUp = gravityDir.y < -0.25
         if fallingUp {
@@ -571,6 +577,19 @@ final class AutumnEngine: SeasonEngine {
             }
         }
 
+        if density == .shower && gravityDir.y > 0.5 {
+            var topmostGround = height
+            for i in leaves.indices where leaves[i].active && leaves[i].asleep
+                && leaves[i].group == groundID {
+                if leaves[i].pos.y < topmostGround {
+                    topmostGround = leaves[i].pos.y
+                }
+            }
+            pileSaturated = height - topmostGround > 220
+        } else {
+            pileSaturated = false
+        }
+
         for i in leaves.indices {
             var leaf = leaves[i]
             guard leaf.active else { continue }
@@ -582,8 +601,14 @@ final class AutumnEngine: SeasonEngine {
                     leaf.fading = false
                     leaf.alpha = 1
                     settledCount = max(0, settledCount - 1)
-                    leaves[i] = leaf
-                    spawnAmbientLeaf()
+                    if density == .shower && pileSaturated {
+                        // The ambient replenisher will refill this slot.
+                        leaves[i] = leaf
+                        continue
+                    }
+                    var fresh = Leaf()
+                    spawnAmbient(&fresh)
+                    leaves[i] = fresh
                     continue
                 }
                 leaves[i] = leaf
@@ -609,21 +634,23 @@ final class AutumnEngine: SeasonEngine {
             if leaf.pos.x < leaf.radius {
                 leaf.pos.x = leaf.radius
                 if leaf.vel.x < 0 { leaf.vel.x = -leaf.vel.x * 0.2 }
-                if gravityDir.x < -0.20 { landed = true }
+                if gravityDir.x < -0.20 {
+                    landed = true
+                    leaf.layer = .back
+                }
             } else if leaf.pos.x > width - leaf.radius {
                 leaf.pos.x = width - leaf.radius
                 if leaf.vel.x > 0 { leaf.vel.x = -leaf.vel.x * 0.2 }
-                if gravityDir.x > 0.20 { landed = true }
+                if gravityDir.x > 0.20 {
+                    landed = true
+                    leaf.layer = .back
+                }
             }
             if gravityDir.y < -0.25 && leaf.pos.y - leaf.radius < 0 {
                 leaf.pos.y = leaf.radius
                 if leaf.vel.y < 0 { leaf.vel.y = 0 }
                 landed = true
-            }
-            if gravityDir.y > 0.25 && leaf.pos.y + leaf.radius > height {
-                leaf.pos.y = height - leaf.radius
-                if leaf.vel.y > 0 { leaf.vel.y = 0 }
-                landed = true
+                leaf.layer = .back
             }
 
             landed = resolveSurface(&leaf) || landed
@@ -683,6 +710,80 @@ final class AutumnEngine: SeasonEngine {
         pushWithCursor()
         pushWithWindows()
         processPendingSpawns()
+        growShowerIfNeeded(dt: dt)
+        trimDockPile()
+    }
+
+    /// The Dock is a narrow front-layer shelf. Letting a huge pile build there
+    /// looks like a compressed strip, so keep it to roughly one layer and let
+    /// the excess fall to the desktop behind it.
+    private func trimDockPile() {
+        guard let dock = surfaces[dockID] else { return }
+        let maxLeaves = max(40, Int((dock.x1 - dock.x0) / 14))
+        var count = 0
+        for i in leaves.indices where leaves[i].active && leaves[i].group == dockID {
+            count += 1
+        }
+        guard count > maxLeaves else { return }
+        var released = 0
+        let excess = count - maxLeaves
+        for i in leaves.indices where leaves[i].active && leaves[i].group == dockID {
+            guard released < excess else { break }
+            leaves[i].asleep = false
+            leaves[i].sleepTimer = 0
+            leaves[i].group = 0
+            leaves[i].support = 0
+            leaves[i].noSupportUntil = time + 0.6
+            leaves[i].vel.x += Float.random(in: -25...25)
+            leaves[i].vel.y += 12
+            released += 1
+        }
+    }
+
+    /// Shower keeps adding leaves continuously instead of waiting for the pile
+    /// to settle. The only brake is keeping the app responsive.
+
+    private func growShowerIfNeeded(dt: Float) {
+        guard density == .shower, neverDisappear else { return }
+        frameTimeAvg = frameTimeAvg * 0.92 + dt * 0.08
+        if pileSaturated {
+            showerSpawnAccumulator = 0
+            // Keep the air full while the settled pile stays at a stable
+            // height. This prevents the bottom from compressing forever and
+            // keeps the shower from emptying out.
+            var ambient = 0
+            for i in leaves.indices where leaves[i].active
+                && leaves[i].ambient && !leaves[i].fading {
+                ambient += 1
+            }
+            let limit = frameTimeAvg > 1.0 / 40.0 ? 2 : 8
+            var need = min(limit, targetAmbient - ambient)
+            while need > 0 {
+                if let i = firstInactiveIndex() {
+                    spawnAmbient(&leaves[i])
+                } else {
+                    var leaf = Leaf()
+                    spawnAmbient(&leaf)
+                    leaves.append(leaf)
+                }
+                need -= 1
+            }
+            return
+        }
+
+        guard leaves.count < 2000 || frameTimeAvg < 1.0 / 30.0 else {
+            showerSpawnAccumulator = 0
+            return
+        }
+        showerSpawnAccumulator += dt * 40
+        var added = 0
+        while showerSpawnAccumulator >= 1 && added < 4 {
+            showerSpawnAccumulator -= 1
+            var leaf = Leaf()
+            spawnAmbient(&leaf)
+            leaves.append(leaf)
+            added += 1
+        }
     }
 
     private func resolveSurface(_ leaf: inout Leaf) -> Bool {
@@ -692,7 +793,7 @@ final class AutumnEngine: SeasonEngine {
            !s.isMoving, gravityDir.y > 0.15,
            leaf.pos.x >= s.x0, leaf.pos.x <= s.x1 {
             let sy = s.surfaceY(leaf.pos.x)
-            if leaf.pos.y + leaf.radius >= sy - 8,
+            if leaf.pos.y + leaf.radius >= sy - 2,
                leaf.pos.y + leaf.radius <= sy + 16 {
                 leaf.pos.y = sy - leaf.radius
                 if leaf.vel.y > 0 { leaf.vel.y = 0 }
@@ -927,6 +1028,7 @@ final class AutumnEngine: SeasonEngine {
             if gravityDir.y > 0.15 && leaves[i].pos.y + leaves[i].radius > height {
                 leaves[i].pos.y = height - leaves[i].radius
                 if leaves[i].vel.y > 0 { leaves[i].vel.y = 0 }
+                leaves[i].layer = .back
             }
             let speed2 = leaves[i].vel.x * leaves[i].vel.x
                 + leaves[i].vel.y * leaves[i].vel.y
@@ -1035,11 +1137,26 @@ final class AutumnEngine: SeasonEngine {
             return
         }
         if neverDisappear {
+            if density == .shower && pileSaturated {
+                // Keep the shower going without growing the bottom pile:
+                // recycle one old settled leaf and let the fade path reuse
+                // that slot for a new falling leaf.
+                if let oldest = oldestSettledLeaf() {
+                    leaves[oldest].fading = true
+                }
+                return
+            }
             if leaves.count + pendingSpawns < maxLeafCount {
                 pendingSpawns += 1
             }
             return
         }
+        if let oldest = oldestSettledLeaf() {
+            leaves[oldest].fading = true
+        }
+    }
+
+    private func oldestSettledLeaf() -> Int? {
         var oldest = -1
         var oldestTime = Float.greatestFiniteMagnitude
         for i in leaves.indices where leaves[i].active
@@ -1049,9 +1166,7 @@ final class AutumnEngine: SeasonEngine {
                 oldest = i
             }
         }
-        if oldest >= 0 {
-            leaves[oldest].fading = true
-        }
+        return oldest >= 0 ? oldest : nil
     }
 
     private func processPendingSpawns() {
@@ -1105,6 +1220,7 @@ final class AutumnEngine: SeasonEngine {
                 backLeaves.append(inst)
             }
         }
+
     }
 
     /// Leaves sitting on a window should be hidden by any window stacked above
